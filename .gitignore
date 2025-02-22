@@ -1,3 +1,9 @@
+# Secrets and environment variables
 .env
+secrets.json
 
+# Virtual environments
 fantasy_env/
+
+# Misc
+.DS_Store
