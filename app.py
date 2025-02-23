@@ -13,5 +13,16 @@ def get_fantasy_data():
     access_token = auth_header.split(" ")[1]
     token = {"access_token": access_token, "refresh_token": refresh_token}
     query = Query(token, league_key)
-    teams = query.get_teams()
-    return teams
+    teams, standings = query.get_teams()
+    metrics = [
+        {
+            "title": '"Official" Results',
+            "description": "Sure, these are the official results. But were they really the best team? The luckiest? The biggest flop? Keep scrolling to uncover the real winners and losers of the season.",
+            "stats": standings
+        }
+    ]
+    response = {
+        "teams": teams,
+        "metrics": metrics,
+    }
+    return response

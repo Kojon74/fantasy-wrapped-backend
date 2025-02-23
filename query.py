@@ -56,5 +56,6 @@ class Query():
         """
         url = f"{BASE_URL}/league/{self.league_key};out=standings"
         teams = self.get_response(url)["league"]["standings"]["teams"]
-        teams_dict = {team["team_key"]: {"team_image": team["managers"]["manager"]["image_url"], "team_name": team["name"], "team_nickname": team["managers"]["manager"]["nickname"], "standing": i+1} for i, team in enumerate(teams)}
-        return teams_dict
+        teams_dict = {team["team_key"]: {"image": team["managers"]["manager"]["image_url"], "name": team["name"], "nickname": team["managers"]["manager"]["nickname"]} for team in teams}
+        standings = [{"key": team["team_key"], "value": i+1} for i, team in enumerate(teams)] # More efficient to combine two loops?
+        return teams_dict, standings
