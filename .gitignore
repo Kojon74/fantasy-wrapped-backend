@@ -7,3 +7,4 @@ fantasy_env/
 
 # Misc
 .DS_Store
+__pycache__/
