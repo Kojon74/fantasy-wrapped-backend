@@ -14,7 +14,7 @@ def get_fantasy_wrapped(
         return jsonify({"error": "Missing or invalid access token"}), 401
     access_token = authorization.split(" ")[1]
     token = {"access_token": access_token, "refresh_token": x_refresh_token}
-    query = Query(token, league_key)
+    query = Query(league_key, token)
     metrics = query.get_metrics()
     response = {
         "metrics": metrics,

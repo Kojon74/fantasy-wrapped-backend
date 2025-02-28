@@ -4,13 +4,20 @@ import requests
 from requests.adapters import HTTPAdapter, Retry
 from utils import xml_to_dict
 from collections import defaultdict
+import unicodedata
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
 from yahoo_oauth_wrapper import YahooOAuthWrapper
+
+load_dotenv()
+CLIENT_ID = os.getenv("YAHOO_CONSUMER_KEY")
+CLIENT_SECRET = os.getenv("YAHOO_CONSUMER_SECRET")
 
 BASE_URL = "https://fantasysports.yahooapis.com/fantasy/v2"
 
 class Query():
-    def __init__(self, token, league_key):
+    def __init__(self, league_key, token=None):
         self.oauth = self.authenticate(token)
         
         self.oauth.refresh_access_token() # In case access_token is already expired
@@ -19,9 +26,12 @@ class Query():
         self.league_key = league_key
         self.game_id, _, self.league_id = league_key.split(".")
         self.get_league()
-
+        self.matchups = self.get_matchups()
+        self.game_logs_cache = {}
 
     def authenticate(self, token):
+        if not token:
+            return OAuth2(CLIENT_ID, CLIENT_SECRET, browser_callback=True)
         return YahooOAuthWrapper(token["access_token"], token["refresh_token"])
 
     def init_session(self):
@@ -56,10 +66,29 @@ class Query():
     def get_league(self):
         url = f"{BASE_URL}/league/{self.league_key};out=standings,settings"
         league = self.get_response(url)["league"]
+        self.league_start_date_str = league["start_date"]
+        self.league_end_date_str = league["end_date"]
         self.league_start_week = int(league["start_week"])
         self.league_end_week = int(league["end_week"])
         self.playoff_start_week = int(league["settings"].get("playoff_start_week", None))
+        self.league_season = int(league["season"])
         self.teams = league["standings"]["teams"]
+
+    def get_game_weeks(self):
+        url = f"{BASE_URL}/game/{self.game_id}/game_weeks"
+        game_weeks = self.get_response(url)["game"]["game_weeks"]
+        game_weeks[self.league_start_week-1]["start"] = self.league_start_date_str # Should it be -1 or -league_start_week?
+        game_weeks[self.league_end_week-1]["end"] = self.league_end_date_str
+        return game_weeks
+
+    def get_dates_by_week(self, week):
+        league_game_weeks = self.get_game_weeks()
+        start_date_str = league_game_weeks[week-1]["start"]
+        end_date_str = league_game_weeks[week-1]["end"]
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+        dates = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range((end_date - start_date).days + 1)]
+        return dates
 
     def get_teams(self):
         """
@@ -82,7 +111,7 @@ class Query():
             player 
             for i in range(int(len(player_keys) / 25) + 1)
             for player in self.get_response(
-                f"https://fantasysports.yahooapis.com/fantasy/v2/league/{self.league_key}/players;player_keys={','.join(player_keys[i*25:min((i+1)*25, len(player_keys))])};start={i*25}/stats"
+                f"{BASE_URL}/league/{self.league_key}/players;player_keys={','.join(player_keys[i*25:min((i+1)*25, len(player_keys))])};start={i*25}/stats"
             )["league"]["players"]
         ]
 
@@ -93,9 +122,57 @@ class Query():
             player 
             for i in range(int(n/25)+1) 
             for player in self.get_response(
-                f"https://fantasysports.yahooapis.com/fantasy/v2/league/{self.league_key}/players;sort=PTS;sort_type=season;position={position};count={n};start={i*25}/stats"
+                f"{BASE_URL}/league/{self.league_key}/players;sort=PTS;sort_type=season;position={position};count={n};start={i*25}/stats"
             )["league"]["players"]
         ]
+
+    def normalize_name(self, name):
+        # Normalize the name to NFKD form and remove diacritics
+        return ''.join(
+            c for c in unicodedata.normalize('NFKD', name)
+            if not unicodedata.combining(c)
+        )
+
+    def get_player_game_log_nhl(self, player_id):
+        season = f"{self.league_season}{self.league_season+1}"
+        return requests.get(f"https://api-web.nhle.com/v1/player/{player_id}/game-log/{season}/2").json()["gameLog"] # 2 inndicates regular season games
+
+    def get_game_log_by_player(self, player_key, player_name, player_position):
+        if player_key in self.game_logs_cache:
+            return self.game_logs_cache[player_key]
+        player_name_url = player_name.replace(" ", "%20").replace("-", "%20")
+        players_resp = requests.get(f"https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={player_name_url}%2A").json()
+        players = [player for player in players_resp if self.normalize_name(player["name"]) == player_name] # Matching names
+        # If there are multiple players matching name, filter by other attributes
+        if len(players) > 1:
+            players = [player for player in players if player["lastSeasonId"] and int(player["lastSeasonId"][:4]) >= self.league_season]
+            if len(players) > 1:
+                players = [player for player in players if player["positionCode"] in player_position.split(",")]
+        if len(players) != 1:
+            print(len(players), player_name, players)
+        player = players[0]
+        player_id = player["playerId"]
+        player_game_log = self.get_player_game_log_nhl(player_id)
+        self.game_logs_cache[player_key] = player_game_log
+        return player_game_log
+
+    def get_player_team_on_date(self, player_game_log, date):
+        game = next(iter([game for game in player_game_log if datetime.strptime(game["gameDate"], "%Y-%m-%d") <= datetime.strptime(date, "%Y-%m-%d")]), None)
+        if game is None:
+            team = player_game_log[-1]["teamAbbrev"]
+        else:
+            team = game["teamAbbrev"]
+        return team
+
+    def get_matchups(self):
+        weeks = ",".join([str(week) for week in range(self.league_start_week, self.league_end_week + 1)])
+        url = f"{BASE_URL}/league/{self.league_key}/scoreboard;week={weeks}"
+        return self.get_response(url)["league"]["scoreboard"]["matchups"]
+
+    def get_opp_team_by_week(self, team_key, week):
+        # TODO make this a dict to improve performance so don't have to search through list every time
+        opp_key = [matchup["teams"][0]["team_key"] if matchup["teams"][0]["team_key"] != team_key else matchup["teams"][1]["team_key"] for matchup in self.matchups if int(matchup["week"]) == week and team_key in [team["team_key"] for team in matchup["teams"]]]
+        return opp_key[0] if len(opp_key) else None
 
     def get_alternative_realities(self):
         """
@@ -105,7 +182,7 @@ class Query():
         """
         num_reg_weeks = self.playoff_start_week - self.league_start_week
         weeks = ",".join([str(week) for week in range(self.league_start_week, self.playoff_start_week)])
-        url = f"https://fantasysports.yahooapis.com/fantasy/v2/league/{self.league_key}/scoreboard;week={weeks}/matchups"
+        url = f"{BASE_URL}/league/{self.league_key}/scoreboard;week={weeks}/matchups"
         matchups = self.get_response(url)["league"]["scoreboard"]["matchups"]
         team_schedules = defaultdict(lambda: {"points": [], "opponent": []})
         for matchup in matchups:
@@ -168,20 +245,24 @@ class Query():
         HITS_STAT_ID = 31
         hits_by_team = defaultdict(int)
         top_player_by_team = {}
+        opp_players_by_team = defaultdict(lambda: defaultdict(lambda: {"name": None, "image_url": None, "points": 0}))
         for team in self.teams:
             team_points_by_nhl_team = defaultdict(float)
             team_points_by_player = defaultdict(lambda: {"name": None, "image_url": None, "points": 0})
-            for week in range(league_start_week, league_end_week + 1):
-                week_end_date = get_dates_by_week(week)[-1]
-                url = f"https://fantasysports.yahooapis.com/fantasy/v2/team/{team['team_key']}/roster;week={week}/players/stats;type=week;week={week}"
-                roster_players = get_response(url)["team"]["roster"]["players"]
+            for week in range(self.league_start_week, self.league_end_week + 1):
+                opp_team = self.get_opp_team_by_week(team["team_key"], week)
+                if not opp_team:
+                    # Means this team had no matchup for the current week, skip
+                    continue
+                week_end_date = self.get_dates_by_week(week)[-1]
+                url = f"{BASE_URL}/team/{team['team_key']}/roster;week={week}/players/stats;type=week;week={week}"
+                roster_players = self.get_response(url)["team"]["roster"]["players"]
                 for player in roster_players:
                     hits_by_team[team["team_key"]] += next(iter([int(stat["value"]) for stat in player["player_stats"]["stats"] if int(stat["stat_id"]) == HITS_STAT_ID and stat["value"] != "-"]), 0)
                     
                     if not player["player_points"]["total"]:
                         # Can skip rest if no points
                         continue
-                    player_game_log = get_game_log_by_player(player["player_key"], player["name"]["full"], player["display_position"])
 
                     # Team points by player
                     if team_points_by_player[player["player_key"]]["name"] is None:
@@ -189,22 +270,44 @@ class Query():
                         team_points_by_player[player["player_key"]]["image_url"] = player["image_url"]
                     team_points_by_player[player["player_key"]]["points"] += float(player["player_points"]["total"])
 
+                    # Team points by opposing player
+                    if opp_players_by_team[opp_team][player["player_key"]]["name"] is None:
+                        opp_players_by_team[opp_team][player["player_key"]]["name"] = player["name"]["full"]
+                        opp_players_by_team[opp_team][player["player_key"]]["image_url"] = player["image_url"]
+                    opp_players_by_team[opp_team][player["player_key"]]["points"] += float(player["player_points"]["total"])
+
                     # Team points by NHL team
-                    nhl_team = get_player_team_on_date(player_game_log, week_end_date)
-                    team_points_by_nhl_team[nhl_team] += float(player["player_points"]["total"])
+                    # player_game_log = self.get_game_log_by_player(player["player_key"], player["name"]["full"], player["display_position"])
+                    # nhl_team = self.get_player_team_on_date(player_game_log, week_end_date)
+                    # team_points_by_nhl_team[nhl_team] += float(player["player_points"]["total"])
                     
             team_points_by_nhl_team = sorted(team_points_by_nhl_team.items(), key=lambda item: item[1], reverse=True)
             team_points_by_player = sorted(team_points_by_player.values(), key=lambda value: value["points"], reverse=True)
-            top_nhl_team = team_points_by_nhl_team[0][0]
-            top_nhl_team_pct = round(team_points_by_nhl_team[0][1]/sum([row[1] for row in team_points_by_nhl_team])*100)
+            # top_nhl_team = team_points_by_nhl_team[0][0]
+            # top_nhl_team_pct = round(team_points_by_nhl_team[0][1]/sum([row[1] for row in team_points_by_nhl_team])*100)
             top_player = team_points_by_player[0]
             top_player_pct = round(top_player["points"]/sum([row["points"] for row in team_points_by_player])*100)
-            top_player_by_team[team["team_key"]] = {"player_name": top_player["name"], "player_pct": top_player_pct}
+            top_player_by_team[team["team_key"]] = {"player_name": top_player["name"], "player_img": top_player["image_url"], "player_pct": top_player_pct}
+        top_player_by_team_sorted = sorted(top_player_by_team.items(), key=lambda x: x[1]["player_pct"], reverse=True)
+        top_player_by_team_sorted_ret = [
+            {
+                "rank": i+1, 
+                "image_url": v["player_img"], 
+                "main_text": v["player_name"], 
+                "sub_text": self.get_team_name_from_key(k), 
+                "stat": f'{v["player_pct"]}%'
+            } for i, [k, v] in enumerate(top_player_by_team_sorted)
+        ]
+        top_opp_player_by_team = {k: sorted(v.values(), key=lambda x: x["points"], reverse=True)[0] for k, v in opp_players_by_team.items()}
+        top_opp_player_by_team_sorted = sorted(top_opp_player_by_team.items(), key=lambda x: x[1]["points"], reverse=True)
+        top_opp_player_by_team_sorted_ret = [{"rank": i+1, "image_url": v["image_url"], "main_text": v["name"], "sub_text": self.get_team_name_from_key(k), "stat": round(v["points"], 1)} for i, [k, v] in enumerate(top_opp_player_by_team_sorted)]
+        return top_player_by_team_sorted_ret, top_opp_player_by_team_sorted_ret
 
     def get_metrics(self):
         standings = self.get_standings()
-        alternative_reality_matrix, team_order = self.get_alternative_realities()
-        draft_busts, draft_steals = self.get_draft_busts_steals()
+        # alternative_reality_matrix, team_order = self.get_alternative_realities()
+        # draft_busts, draft_steals = self.get_draft_busts_steals()
+        top_players_by_team, top_opp_players_by_team = self.get_team_season_data()
         metrics = [
             {
                 "title": '"Official" Results',
@@ -219,17 +322,29 @@ class Query():
             #     "headers": team_order,
             #     "data": alternative_reality_matrix
             # },
+            # {
+            #     "title": 'Draft Steal',
+            #     "description": "Some picks turn out to be absolute gems! This metric highlights the player who delivered the biggest return on investment, massively outperforming their draft position. Whether it was a late-round sleeper who dominated or a mid-round pick who played like a first-rounder, this is your league's ultimate steal of the draft.",
+            #     "type": "list",
+            #     "data": draft_steals
+            # },
+            # {
+            #     "title": 'Draft Bust',
+            #     "description": "Not all picks live up to the hype. This metric identifies the player who fell the hardest from expectations, drastically underperforming their draft position. Whether it was due to injuries, poor form, or just bad luck, this was the pick that stung the most for fantasy managers.",
+            #     "type": "list",
+            #     "data": draft_busts
+            # },
             {
-                "title": 'Draft Steal',
-                "description": "Some picks turn out to be absolute gems! This metric highlights the player who delivered the biggest return on investment, massively outperforming their draft position. Whether it was a late-round sleeper who dominated or a mid-round pick who played like a first-rounder, this is your league's ultimate steal of the draft.",
+                "title": 'One-Man Army',
+                "description": "This metric highlights the player who carried the biggest scoring burden for their team by contributing the highest percentage of their team’s total points. It showcases which players were the most crucial to their team’s success, whether due to elite performance or a lack of supporting cast. A high percentage means this player was the go-to option, shouldering most of the team’s fantasy production.",
                 "type": "list",
-                "data": draft_steals
+                "data": top_players_by_team
             },
             {
-                "title": 'Draft Bust',
-                "description": "Not all picks live up to the hype. This metric identifies the player who fell the hardest from expectations, drastically underperforming their draft position. Whether it was due to injuries, poor form, or just bad luck, this was the pick that stung the most for fantasy managers.",
+                "title": 'Team Tormentor',
+                "description": "This metric identifies the player who scored the most total points against a single team, revealing their toughest matchup.",
                 "type": "list",
-                "data": draft_busts
-            }
+                "data": top_opp_players_by_team
+            },
         ]
         return metrics
