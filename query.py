@@ -67,8 +67,15 @@ class Query():
         {[team_key: string]: {team_image: string, team_name: string, team_nickname: string}}
         """
         teams_dict = {team["team_key"]: {"image": team["managers"]["manager"]["image_url"], "name": team["name"], "nickname": team["managers"]["manager"]["nickname"]} for team in self.teams}
-        standings = [{"key": team["team_key"], "value": i+1} for i, team in enumerate(self.teams)] # More efficient to combine two loops?
-        return teams_dict, standings
+        return teams_dict
+
+    def get_team_name_from_key(self, team_key):
+        team_name = next(team["name"] for team in self.teams if team["team_key"] == team_key)
+        return team_name
+
+    def get_standings(self):
+        standings = [{"rank": i+1, "image_url": team["team_logos"]["team_logo"]["url"], "main_text": team["name"]} for i, team in enumerate(self.teams)]
+        return standings
 
     def get_players(self, player_keys):
         return [
@@ -123,8 +130,12 @@ class Query():
         # Get draft results
         url = f"{BASE_URL}/league/{self.league_key}/draftresults"
         draft_results = self.get_response(url)["league"]["draft_results"]
+        # draft results doesn't return player stats
         draft_player_keys = [draft_result["player_key"] for draft_result in draft_results]
         draft_players = self.get_players(draft_player_keys)
+        # Add some way to refeerence back to the team that drafted each player
+        for draft_player, draft_results in zip(draft_players, draft_results): # TODO: See if using list comprehension would be faster, would be moree memory intensive
+            draft_player["team_key"] = draft_results["team_key"]
         draft_players_by_pos = defaultdict(list)
         positions_map = {"C": "F", "LW": "F", "RW": "F", "D": "D", "G": "G"}
         for draft_player in draft_players:
@@ -137,12 +148,88 @@ class Query():
         }
         # Get differences between draft player and top player
         diffs = []
-        for key in draft_players_by_pos:
-            for draft_player, top_player in zip(draft_players_by_pos[key], top_players_by_pos[key]):
+        for pos in draft_players_by_pos:
+            for draft_player, top_player in zip(draft_players_by_pos[pos], top_players_by_pos[pos]):
                 diff = round(float(draft_player["player_points"]["total"]) - float(top_player["player_points"]["total"]), 1)
                 diffs.append((diff, draft_player))
         smallest_diff = sorted(diffs, key=lambda x: x[0])
         biggest_diff = sorted(diffs, reverse=True, key=lambda x: x[0])
-        draft_busts = [{"key": player["player_key"], "name": player["name"]["full"], "image": player["image_url"], "value": diff} for diff, player in smallest_diff[:5]]
-        draft_steals = [{"key": player["player_key"], "name": player["name"]["full"], "image": player["image_url"], "value": diff} for diff, player in biggest_diff[:5]]
+        draft_busts = [{"rank": i+1, "image_url": player["image_url"], "main_text": player["name"]["full"], "sub_text": self.get_team_name_from_key(player["team_key"]), "stat": diff} for i, [diff, player] in enumerate(smallest_diff[:5])]
+        draft_steals = [{"rank": i+1, "image_url": player["image_url"], "main_text": player["name"]["full"], "sub_text": self.get_team_name_from_key(player["team_key"]), "stat": diff} for i, [diff, player] in enumerate(biggest_diff[:5])]
         return draft_busts, draft_steals
+
+    def get_team_season_data(self):
+        """
+        Returns:
+        NHL team that contributed most to each team
+        Player that contributed most to each team
+        Team with most hits
+        """
+        HITS_STAT_ID = 31
+        hits_by_team = defaultdict(int)
+        top_player_by_team = {}
+        for team in self.teams:
+            team_points_by_nhl_team = defaultdict(float)
+            team_points_by_player = defaultdict(lambda: {"name": None, "image_url": None, "points": 0})
+            for week in range(league_start_week, league_end_week + 1):
+                week_end_date = get_dates_by_week(week)[-1]
+                url = f"https://fantasysports.yahooapis.com/fantasy/v2/team/{team['team_key']}/roster;week={week}/players/stats;type=week;week={week}"
+                roster_players = get_response(url)["team"]["roster"]["players"]
+                for player in roster_players:
+                    hits_by_team[team["team_key"]] += next(iter([int(stat["value"]) for stat in player["player_stats"]["stats"] if int(stat["stat_id"]) == HITS_STAT_ID and stat["value"] != "-"]), 0)
+                    
+                    if not player["player_points"]["total"]:
+                        # Can skip rest if no points
+                        continue
+                    player_game_log = get_game_log_by_player(player["player_key"], player["name"]["full"], player["display_position"])
+
+                    # Team points by player
+                    if team_points_by_player[player["player_key"]]["name"] is None:
+                        team_points_by_player[player["player_key"]]["name"] = player["name"]["full"]
+                        team_points_by_player[player["player_key"]]["image_url"] = player["image_url"]
+                    team_points_by_player[player["player_key"]]["points"] += float(player["player_points"]["total"])
+
+                    # Team points by NHL team
+                    nhl_team = get_player_team_on_date(player_game_log, week_end_date)
+                    team_points_by_nhl_team[nhl_team] += float(player["player_points"]["total"])
+                    
+            team_points_by_nhl_team = sorted(team_points_by_nhl_team.items(), key=lambda item: item[1], reverse=True)
+            team_points_by_player = sorted(team_points_by_player.values(), key=lambda value: value["points"], reverse=True)
+            top_nhl_team = team_points_by_nhl_team[0][0]
+            top_nhl_team_pct = round(team_points_by_nhl_team[0][1]/sum([row[1] for row in team_points_by_nhl_team])*100)
+            top_player = team_points_by_player[0]
+            top_player_pct = round(top_player["points"]/sum([row["points"] for row in team_points_by_player])*100)
+            top_player_by_team[team["team_key"]] = {"player_name": top_player["name"], "player_pct": top_player_pct}
+
+    def get_metrics(self):
+        standings = self.get_standings()
+        alternative_reality_matrix, team_order = self.get_alternative_realities()
+        draft_busts, draft_steals = self.get_draft_busts_steals()
+        metrics = [
+            {
+                "title": '"Official" Results',
+                "description": "Sure, these are the official results. But were they really the best team? The luckiest? The biggest flop? Keep scrolling to uncover the real winners and losers of the season.",
+                "type": "list",
+                "data": standings
+            },
+            # {
+            #     "title": 'Alternative Realities',
+            #     "description": "What if your team had a different schedule? This matrix reimagines the season by swapping team schedules, showing how records would have changed in an alternate universe. Did bad luck hold you back, or were you truly dominant no matter the matchups?",
+            #     "type": "table",
+            #     "headers": team_order,
+            #     "data": alternative_reality_matrix
+            # },
+            {
+                "title": 'Draft Steal',
+                "description": "Some picks turn out to be absolute gems! This metric highlights the player who delivered the biggest return on investment, massively outperforming their draft position. Whether it was a late-round sleeper who dominated or a mid-round pick who played like a first-rounder, this is your league's ultimate steal of the draft.",
+                "type": "list",
+                "data": draft_steals
+            },
+            {
+                "title": 'Draft Bust',
+                "description": "Not all picks live up to the hype. This metric identifies the player who fell the hardest from expectations, drastically underperforming their draft position. Whether it was due to injuries, poor form, or just bad luck, this was the pick that stung the most for fantasy managers.",
+                "type": "list",
+                "data": draft_busts
+            }
+        ]
+        return metrics
