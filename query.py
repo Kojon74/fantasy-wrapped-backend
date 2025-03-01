@@ -195,7 +195,7 @@ class Query():
         for i, [team_a_key, team_a]  in enumerate(team_schedules.items()):
             for j, team_b in enumerate(team_schedules.values()):
                 results = [0.5 if team_a_pts == team_opp["points"] else team_a_pts > team_opp["points"] for team_a_pts, team_opp in zip(team_a["points"], team_b["opponent"]) if team_opp["key"] != team_a_key]
-                percent = round(sum(results)/len(results), 3)
+                percent = format(round(sum(results)/len(results), 3), ".3f")
                 team_schedule_matrix[i][j] = percent
         team_order = list(team_schedules.keys())
         return team_schedule_matrix, team_order
@@ -231,8 +231,8 @@ class Query():
                 diffs.append((diff, draft_player))
         smallest_diff = sorted(diffs, key=lambda x: x[0])
         biggest_diff = sorted(diffs, reverse=True, key=lambda x: x[0])
-        draft_busts = [{"rank": i+1, "image_url": player["image_url"], "main_text": player["name"]["full"], "sub_text": self.get_team_name_from_key(player["team_key"]), "stat": diff} for i, [diff, player] in enumerate(smallest_diff[:5])]
-        draft_steals = [{"rank": i+1, "image_url": player["image_url"], "main_text": player["name"]["full"], "sub_text": self.get_team_name_from_key(player["team_key"]), "stat": diff} for i, [diff, player] in enumerate(biggest_diff[:5])]
+        draft_busts = [{"rank": i+1, "image_url": player["image_url"], "main_text": player["name"]["full"], "sub_text": self.get_team_name_from_key(player["team_key"]), "stat": f"{format(diff, '.1f')} pts"} for i, [diff, player] in enumerate(smallest_diff[:5])]
+        draft_steals = [{"rank": i+1, "image_url": player["image_url"], "main_text": player["name"]["full"], "sub_text": self.get_team_name_from_key(player["team_key"]), "stat": f"+{format(diff, '.1f')} pts"} for i, [diff, player] in enumerate(biggest_diff[:5])]
         return draft_busts, draft_steals
 
     def get_team_season_data(self):
@@ -300,14 +300,14 @@ class Query():
         ]
         top_opp_player_by_team = {k: sorted(v.values(), key=lambda x: x["points"], reverse=True)[0] for k, v in opp_players_by_team.items()}
         top_opp_player_by_team_sorted = sorted(top_opp_player_by_team.items(), key=lambda x: x[1]["points"], reverse=True)
-        top_opp_player_by_team_sorted_ret = [{"rank": i+1, "image_url": v["image_url"], "main_text": v["name"], "sub_text": self.get_team_name_from_key(k), "stat": round(v["points"], 1)} for i, [k, v] in enumerate(top_opp_player_by_team_sorted)]
+        top_opp_player_by_team_sorted_ret = [{"rank": i+1, "image_url": v["image_url"], "main_text": v["name"], "sub_text": self.get_team_name_from_key(k), "stat": f'{format(round(v["points"], 1), ".1f")} pts'} for i, [k, v] in enumerate(top_opp_player_by_team_sorted)]
         return top_player_by_team_sorted_ret, top_opp_player_by_team_sorted_ret
 
     def get_metrics(self):
         standings = self.get_standings()
         # alternative_reality_matrix, team_order = self.get_alternative_realities()
-        # draft_busts, draft_steals = self.get_draft_busts_steals()
-        top_players_by_team, top_opp_players_by_team = self.get_team_season_data()
+        draft_busts, draft_steals = self.get_draft_busts_steals()
+        # top_players_by_team, top_opp_players_by_team = self.get_team_season_data()
         metrics = [
             {
                 "title": '"Official" Results',
@@ -322,29 +322,29 @@ class Query():
             #     "headers": team_order,
             #     "data": alternative_reality_matrix
             # },
-            # {
-            #     "title": 'Draft Steal',
-            #     "description": "Some picks turn out to be absolute gems! This metric highlights the player who delivered the biggest return on investment, massively outperforming their draft position. Whether it was a late-round sleeper who dominated or a mid-round pick who played like a first-rounder, this is your league's ultimate steal of the draft.",
-            #     "type": "list",
-            #     "data": draft_steals
-            # },
-            # {
-            #     "title": 'Draft Bust',
-            #     "description": "Not all picks live up to the hype. This metric identifies the player who fell the hardest from expectations, drastically underperforming their draft position. Whether it was due to injuries, poor form, or just bad luck, this was the pick that stung the most for fantasy managers.",
-            #     "type": "list",
-            #     "data": draft_busts
-            # },
             {
-                "title": 'One-Man Army',
-                "description": "This metric highlights the player who carried the biggest scoring burden for their team by contributing the highest percentage of their team’s total points. It showcases which players were the most crucial to their team’s success, whether due to elite performance or a lack of supporting cast. A high percentage means this player was the go-to option, shouldering most of the team’s fantasy production.",
+                "title": 'Draft Steal',
+                "description": "Some picks turn out to be absolute gems! This metric highlights the player who delivered the biggest return on investment, massively outperforming their draft position. Whether it was a late-round sleeper who dominated or a mid-round pick who played like a first-rounder, this is your league's ultimate steal of the draft.",
                 "type": "list",
-                "data": top_players_by_team
+                "data": draft_steals
             },
             {
-                "title": 'Team Tormentor',
-                "description": "This metric identifies the player who scored the most total points against a single team, revealing their toughest matchup.",
+                "title": 'Draft Bust',
+                "description": "Not all picks live up to the hype. This metric identifies the player who fell the hardest from expectations, drastically underperforming their draft position. Whether it was due to injuries, poor form, or just bad luck, this was the pick that stung the most for fantasy managers.",
                 "type": "list",
-                "data": top_opp_players_by_team
+                "data": draft_busts
             },
+            # {
+            #     "title": 'One-Man Army',
+            #     "description": "This metric highlights the player who carried the biggest scoring burden for their team by contributing the highest percentage of their team’s total points. It showcases which players were the most crucial to their team’s success, whether due to elite performance or a lack of supporting cast. A high percentage means this player was the go-to option, shouldering most of the team’s fantasy production.",
+            #     "type": "list",
+            #     "data": top_players_by_team
+            # },
+            # {
+            #     "title": 'Team Tormentor',
+            #     "description": "This metric identifies the player who scored the most total points against a single team, revealing their toughest matchup.",
+            #     "type": "list",
+            #     "data": top_opp_players_by_team
+            # },
         ]
         return metrics
