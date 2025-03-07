@@ -174,6 +174,15 @@ class Query():
         opp_key = [matchup["teams"][0]["team_key"] if matchup["teams"][0]["team_key"] != team_key else matchup["teams"][1]["team_key"] for matchup in self.matchups if int(matchup["week"]) == week and team_key in [team["team_key"] for team in matchup["teams"]]]
         return opp_key[0] if len(opp_key) else None
 
+    def get_all_teams_daily_stats(self):
+        start_date = datetime.strptime(self.league_start_date_str, "%Y-%m-%d")
+        end_date = datetime.strptime(self.league_end_date_str, "%Y-%m-%d")
+        dates = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range((end_date - start_date).days + 1)]
+        url = f"{BASE_URL}/league/{self.league_key}/teams/stats_collection;types=date;date={','.join(dates)}"
+        all_teams_daily_stats = self.get_response(url)["league"]["teams"]
+        all_teams_daily_stats_dict = {team["team_key"]: {team_points["date"]: float(team_points["total"]) for team_points in team["team_stats_collection"]["team_points"]} for team in all_teams_daily_stats} # Preprocess into dict for constant time lookup {[team_key: str]: {[date: str]: float}}
+        return all_teams_daily_stats_dict
+
     def get_alternative_realities(self):
         """
         Returns:
@@ -197,7 +206,7 @@ class Query():
                 results = [0.5 if team_a_pts == team_opp["points"] else team_a_pts > team_opp["points"] for team_a_pts, team_opp in zip(team_a["points"], team_b["opponent"]) if team_opp["key"] != team_a_key]
                 percent = format(round(sum(results)/len(results), 3), ".3f")
                 team_schedule_matrix[i][j] = percent
-        team_order = list(team_schedules.keys())
+        team_order = [self.get_team_name_from_key(team_key) for team_key in team_schedules.keys()]
         return team_schedule_matrix, team_order
 
     def get_draft_busts_steals(self):
@@ -303,11 +312,43 @@ class Query():
         top_opp_player_by_team_sorted_ret = [{"rank": i+1, "image_url": v["image_url"], "main_text": v["name"], "sub_text": self.get_team_name_from_key(k), "stat": f'{format(round(v["points"], 1), ".1f")} pts'} for i, [k, v] in enumerate(top_opp_player_by_team_sorted)]
         return top_player_by_team_sorted_ret, top_opp_player_by_team_sorted_ret
 
+    def get_biggest_comebacks(self):
+        '''
+        Biggest comeback
+        52.8s
+        '''
+        deficits = []
+        all_teams_daily_stats = self.get_all_teams_daily_stats()
+        for matchup in self.matchups:
+            # Comeback win can't happen without a winner
+            if int(matchup["is_tied"]):
+                continue
+            team_keys = [matchup["teams"][0]["team_key"], matchup["teams"][1]["team_key"]]
+            team_w_idx, team_l_idx = [0, 1] if team_keys[0] == matchup["winner_team_key"] else [1, 0]
+            team_w_key, team_l_key = [team_keys[team_w_idx], team_keys[team_l_idx]]
+            deficit = 0
+            start_date = datetime.strptime(matchup["week_start"], "%Y-%m-%d")
+            end_date = datetime.strptime(matchup["week_end"], "%Y-%m-%d")
+            # Don't include the last day since the matchup is over
+            for i in range((end_date - start_date).days):
+                current_date_str = (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
+                team_w_points = all_teams_daily_stats[team_w_key][current_date_str]
+                team_l_points = all_teams_daily_stats[team_l_key][current_date_str]
+                deficit = round(deficit + team_l_points - team_w_points, 1)
+                if deficit > 0:
+                    deficits.append((deficit, {"week": matchup["week"], "winner_team_key": matchup["winner_team_key"], "team_image_url": matchup["teams"][team_w_idx]["team_logos"]["team_logo"]["url"], "team_name": matchup["teams"][team_w_idx]["name"], "opp_team_name": matchup["teams"][team_l_idx]["name"]}))
+        biggest_deficits = sorted(deficits, key=lambda x: x[0]) # This needs to be in ascending order so when duplicates are removed only the last (largest) is kept
+        biggest_deficits = list({f'{matchup["week"]}.{matchup["winner_team_key"]}': (deficit, matchup) for (deficit, matchup) in biggest_deficits}.values()) # This removes duplicates from same matchup
+        biggest_deficits = sorted(biggest_deficits, reverse=True, key=lambda x: x[0])
+        biggest_combacks = [{"rank": i+1, "image_url": matchup["team_image_url"], "main_text": matchup["team_name"], "sub_text": f'Week {matchup["week"]} vs {matchup["opp_team_name"]}', "stat": f"{format(deficit, '.1f')} pts"} for i, [deficit, matchup] in enumerate(biggest_deficits[:5])]
+        return biggest_combacks
+
     def get_metrics(self):
         standings = self.get_standings()
         # alternative_reality_matrix, team_order = self.get_alternative_realities()
-        draft_busts, draft_steals = self.get_draft_busts_steals()
+        # draft_busts, draft_steals = self.get_draft_busts_steals()
         # top_players_by_team, top_opp_players_by_team = self.get_team_season_data()
+        biggest_comebacks = self.get_biggest_comebacks()
         metrics = [
             {
                 "title": '"Official" Results',
@@ -322,18 +363,18 @@ class Query():
             #     "headers": team_order,
             #     "data": alternative_reality_matrix
             # },
-            {
-                "title": 'Draft Steal',
-                "description": "Some picks turn out to be absolute gems! This metric highlights the player who delivered the biggest return on investment, massively outperforming their draft position. Whether it was a late-round sleeper who dominated or a mid-round pick who played like a first-rounder, this is your league's ultimate steal of the draft.",
-                "type": "list",
-                "data": draft_steals
-            },
-            {
-                "title": 'Draft Bust',
-                "description": "Not all picks live up to the hype. This metric identifies the player who fell the hardest from expectations, drastically underperforming their draft position. Whether it was due to injuries, poor form, or just bad luck, this was the pick that stung the most for fantasy managers.",
-                "type": "list",
-                "data": draft_busts
-            },
+            # {
+            #     "title": 'Draft Steal',
+            #     "description": "Some picks turn out to be absolute gems! This metric highlights the player who delivered the biggest return on investment, massively outperforming their draft position. Whether it was a late-round sleeper who dominated or a mid-round pick who played like a first-rounder, this is your league's ultimate steal of the draft.",
+            #     "type": "list",
+            #     "data": draft_steals
+            # },
+            # {
+            #     "title": 'Draft Bust',
+            #     "description": "Not all picks live up to the hype. This metric identifies the player who fell the hardest from expectations, drastically underperforming their draft position. Whether it was due to injuries, poor form, or just bad luck, this was the pick that stung the most for fantasy managers.",
+            #     "type": "list",
+            #     "data": draft_busts
+            # },
             # {
             #     "title": 'One-Man Army',
             #     "description": "This metric highlights the player who carried the biggest scoring burden for their team by contributing the highest percentage of their team’s total points. It showcases which players were the most crucial to their team’s success, whether due to elite performance or a lack of supporting cast. A high percentage means this player was the go-to option, shouldering most of the team’s fantasy production.",
@@ -346,5 +387,11 @@ class Query():
             #     "type": "list",
             #     "data": top_opp_players_by_team
             # },
+            {
+                "title": 'Greatest Comebacks',
+                "description": "The most impressive turnarounds of the season! This stat highlights the teams that overcame the largest point deficits to secure a victory in a single week, proving that no lead is ever safe.",
+                "type": "list",
+                "data": biggest_comebacks
+            },
         ]
         return metrics
