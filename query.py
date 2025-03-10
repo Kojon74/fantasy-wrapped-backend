@@ -18,6 +18,7 @@ BASE_URL = "https://fantasysports.yahooapis.com/fantasy/v2"
 
 class Query():
     def __init__(self, league_key, token=None):
+        self.num_requests = 0
         self.oauth = self.authenticate(token)
         
         self.oauth.refresh_access_token() # In case access_token is already expired
@@ -28,6 +29,7 @@ class Query():
         self.get_league()
         self.matchups = self.get_matchups()
         self.game_logs_cache = {}
+        self.game_weeks = self.get_game_weeks()
 
     def authenticate(self, token):
         if not token:
@@ -35,6 +37,7 @@ class Query():
         return YahooOAuthWrapper(token["access_token"], token["refresh_token"])
 
     def init_session(self):
+        # TODO: Should I be using OAuth session?
         session = requests.Session()
         retries = Retry(
             total=5,
@@ -47,6 +50,7 @@ class Query():
         return session
 
     def get_response(self, url):
+        self.num_requests += 1
         if not self.oauth.token_is_valid():
             self.oauth.refresh_access_token()
 
@@ -81,10 +85,9 @@ class Query():
         game_weeks[self.league_end_week-1]["end"] = self.league_end_date_str
         return game_weeks
 
-    def get_dates_by_week(self, week):
-        league_game_weeks = self.get_game_weeks()
-        start_date_str = league_game_weeks[week-1]["start"]
-        end_date_str = league_game_weeks[week-1]["end"]
+    def get_dates_by_week(self, week): # TODO: This shouldn't be making a request every time its called
+        start_date_str = self.game_weeks[week-1]["start"]
+        end_date_str = self.game_weeks[week-1]["end"]
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
         dates = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range((end_date - start_date).days + 1)]
@@ -183,12 +186,32 @@ class Query():
         all_teams_daily_stats_dict = {team["team_key"]: {team_points["date"]: float(team_points["total"]) for team_points in team["team_stats_collection"]["team_points"]} for team in all_teams_daily_stats} # Preprocess into dict for constant time lookup {[team_key: str]: {[date: str]: float}}
         return all_teams_daily_stats_dict
 
+    def get_players_points_by_date(self, player_team_dict, dates): # Look into whether or not its possible to do multiple dates in a single request
+        if not player_team_dict:
+            return {}
+        player_keys = list(player_team_dict.keys())
+        points_by_team = defaultdict(float)
+        points_by_player = defaultdict(lambda: {"name": None, "image_url": None, "team_name": None, "points": 0})
+        for date_str in dates:
+            for i in range(0, len(player_keys), 25):
+                player_keys_csv = ",".join(player_keys[i:min(i+25, len(player_keys))])
+                url = f'{BASE_URL}/league/{self.league_key}/players;player_keys={player_keys_csv}/stats;type=date;date={date_str}'
+                players_stats_by_date = self.get_response(url)["league"]["players"]
+                for player in players_stats_by_date:
+                    if player["player_key"] not in points_by_player:
+                        points_by_player[player["player_key"]]["name"] = player["name"]["full"]
+                        points_by_player[player["player_key"]]["image_url"] = player["image_url"]
+                        points_by_player[player["player_key"]]["team_keys"] = list(player_team_dict[player["player_key"]])
+                    points_by_player[player["player_key"]]["points"] = round(points_by_player[player["player_key"]]["points"] + float(player["player_points"]["total"]), 1)
+        return points_by_player
+
     def get_alternative_realities(self):
         """
         Returns:
         alternative_reality_matrix (float[][]): Matrix of records if each team had another teams schedule
         team_order (str[]): list of team_keys indicating the order of teams in the matrix
         """
+        self.num_requests = 0
         num_reg_weeks = self.playoff_start_week - self.league_start_week
         weeks = ",".join([str(week) for week in range(self.league_start_week, self.playoff_start_week)])
         url = f"{BASE_URL}/league/{self.league_key}/scoreboard;week={weeks}/matchups"
@@ -207,12 +230,14 @@ class Query():
                 percent = format(round(sum(results)/len(results), 3), ".3f")
                 team_schedule_matrix[i][j] = percent
         team_order = [self.get_team_name_from_key(team_key) for team_key in team_schedules.keys()]
+        print(f'Alternative Realities: {self.num_requests}')
         return team_schedule_matrix, team_order
 
     def get_draft_busts_steals(self):
         '''
         Biggest draft busts/steals
         '''
+        self.num_requests = 0
         # Get draft results
         url = f"{BASE_URL}/league/{self.league_key}/draftresults"
         draft_results = self.get_response(url)["league"]["draft_results"]
@@ -242,6 +267,7 @@ class Query():
         biggest_diff = sorted(diffs, reverse=True, key=lambda x: x[0])
         draft_busts = [{"rank": i+1, "image_url": player["image_url"], "main_text": player["name"]["full"], "sub_text": self.get_team_name_from_key(player["team_key"]), "stat": f"{format(diff, '.1f')} pts"} for i, [diff, player] in enumerate(smallest_diff[:5])]
         draft_steals = [{"rank": i+1, "image_url": player["image_url"], "main_text": player["name"]["full"], "sub_text": self.get_team_name_from_key(player["team_key"]), "stat": f"+{format(diff, '.1f')} pts"} for i, [diff, player] in enumerate(biggest_diff[:5])]
+        print(f'Draft Busts/Steals: {self.num_requests}')
         return draft_busts, draft_steals
 
     def get_team_season_data(self):
@@ -251,6 +277,7 @@ class Query():
         Player that contributed most to each team
         Team with most hits
         """
+        self.num_requests = 0
         HITS_STAT_ID = 31
         hits_by_team = defaultdict(int)
         top_player_by_team = {}
@@ -310,6 +337,7 @@ class Query():
         top_opp_player_by_team = {k: sorted(v.values(), key=lambda x: x["points"], reverse=True)[0] for k, v in opp_players_by_team.items()}
         top_opp_player_by_team_sorted = sorted(top_opp_player_by_team.items(), key=lambda x: x[1]["points"], reverse=True)
         top_opp_player_by_team_sorted_ret = [{"rank": i+1, "image_url": v["image_url"], "main_text": v["name"], "sub_text": self.get_team_name_from_key(k), "stat": f'{format(round(v["points"], 1), ".1f")} pts'} for i, [k, v] in enumerate(top_opp_player_by_team_sorted)]
+        print(f'Top Players: {self.num_requests}')
         return top_player_by_team_sorted_ret, top_opp_player_by_team_sorted_ret
 
     def get_biggest_comebacks(self):
@@ -317,6 +345,7 @@ class Query():
         Biggest comeback
         52.8s
         '''
+        self.num_requests = 0
         deficits = []
         all_teams_daily_stats = self.get_all_teams_daily_stats()
         for matchup in self.matchups:
@@ -341,21 +370,92 @@ class Query():
         biggest_deficits = list({f'{matchup["week"]}.{matchup["winner_team_key"]}': (deficit, matchup) for (deficit, matchup) in biggest_deficits}.values()) # This removes duplicates from same matchup
         biggest_deficits = sorted(biggest_deficits, reverse=True, key=lambda x: x[0])
         biggest_combacks = [{"rank": i+1, "image_url": matchup["team_image_url"], "main_text": matchup["team_name"], "sub_text": f'Week {matchup["week"]} vs {matchup["opp_team_name"]}', "stat": f"{format(deficit, '.1f')} pts"} for i, [deficit, matchup] in enumerate(biggest_deficits[:5])]
+        print(f'Biggest Comebacks: {self.num_requests}')
         return biggest_combacks
 
+    def get_worst_drops(self):
+        def update_drop_players_points(drop_players_dict, dates):
+            drop_players_points_cur = self.get_players_points_by_date(drop_players_dict, dates)
+            for player_key, drop_player in drop_players_points_cur.items():
+                for team_key in drop_player["team_keys"]:
+                    key = player_key + team_key
+                    if key not in drop_players_points:
+                        drop_players_points[key]["player_name"] = drop_player["name"]
+                        drop_players_points[key]["image_url"] = drop_player["image_url"]
+                        drop_players_points[key]["team_name"] = self.get_team_name_from_key(team_key)
+                    drop_players_points[key]["points"] = round(drop_players_points[key]["points"] + drop_player["points"], 1)
+
+        def get_dates(start_date, end_date):
+            return [
+                (start_date + timedelta(days=i)).strftime("%Y-%m-%d") 
+                for i in range((end_date.date() - start_date.date()).days) 
+                if start_date + timedelta(days=i-1) < datetime.strptime(self.league_end_date_str, "%Y-%m-%d")
+            ]
+
+        self.num_requests = 0
+        url = f'{BASE_URL}/league/{self.league_key}/transactions'
+        transactions = list(reversed(self.get_response(url)["league"]["transactions"]))
+        last_transaction_date = datetime.strptime(self.league_start_date_str, "%Y-%m-%d")
+        drop_players_dict = defaultdict(set)
+        drop_players_remove = []
+        drop_players_points = defaultdict(lambda: {"player_name": None, "image_url": None, "team_name": None, "points": 0})
+        done = False
+        for transaction in transactions:
+            if not "players" in transaction:
+                continue
+            for player in transaction["players"]:
+                if player["transaction_data"]["type"] in ["add", "drop"]:
+                    if player["transaction_data"]["type"] == "add":
+                        # This needs to be at the top because team needs to get removed in current iteration
+                        drop_players_remove.append({"player_key": player["player_key"], "team_key": player["transaction_data"]["destination_team_key"]})
+                    transaction_date = datetime.fromtimestamp(int(transaction["timestamp"]))
+                    if transaction_date.strftime("%Y-%m-%d") != last_transaction_date.strftime("%Y-%m-%d"):
+                        dates = get_dates(last_transaction_date, transaction_date)
+                        update_drop_players_points(drop_players_dict, dates)
+                        if transaction_date > datetime.strptime(self.league_end_date_str, "%Y-%m-%d"):
+                            done = True
+                            break
+                        last_transaction_date = datetime.strptime(dates[-1], "%Y-%m-%d") + timedelta(days=1)
+                        for drop_player_remove in drop_players_remove:
+                            drop_players_dict[drop_player_remove["player_key"]].discard(drop_player_remove["team_key"])
+                            if len(drop_players_dict[drop_player_remove["player_key"]]) == 0:
+                                drop_players_dict.pop(drop_player_remove["player_key"], None)
+                    if player["transaction_data"]["type"] == "drop":
+                        drop_players_dict[player["player_key"]].add(player["transaction_data"]["source_team_key"])
+            if done:
+                break
+        if last_transaction_date.date() != datetime.strptime(self.league_end_date_str, "%Y-%m-%d").date():
+            # If last transaction was not on or past the league end date, get points until league end date
+            league_end_date = datetime.strptime(self.league_end_date_str, "%Y-%m-%d")
+            dates = get_dates(last_transaction_date, league_end_date)
+            update_drop_players_points(drop_players_dict, dates)
+        print(self.num_requests)
+        worst_drops = sorted(drop_players_points.values(), key=lambda x: x["points"], reverse=True)[:10]
+        return [
+            {
+                "rank": i+1, 
+                "image_url": worst_drop["image_url"], 
+                "main_text": worst_drop["player_name"], 
+                "sub_text": worst_drop["team_name"], 
+                "stat": worst_drop["points"]
+            } 
+            for i, worst_drop in enumerate(worst_drops)
+        ]
+
     def get_metrics(self):
-        standings = self.get_standings()
+        # standings = self.get_standings()
         # alternative_reality_matrix, team_order = self.get_alternative_realities()
         # draft_busts, draft_steals = self.get_draft_busts_steals()
         # top_players_by_team, top_opp_players_by_team = self.get_team_season_data()
-        biggest_comebacks = self.get_biggest_comebacks()
+        # biggest_comebacks = self.get_biggest_comebacks()
+        worst_drops = self.get_worst_drops()
         metrics = [
-            {
-                "title": '"Official" Results',
-                "description": "Sure, these are the official results. But were they really the best team? The luckiest? The biggest flop? Keep scrolling to uncover the real winners and losers of the season.",
-                "type": "list",
-                "data": standings
-            },
+            # {
+            #     "title": '"Official" Results',
+            #     "description": "Sure, these are the official results. But were they really the best team? The luckiest? The biggest flop? Keep scrolling to uncover the real winners and losers of the season.",
+            #     "type": "list",
+            #     "data": standings
+            # },
             # {
             #     "title": 'Alternative Realities',
             #     "description": "What if your team had a different schedule? This matrix reimagines the season by swapping team schedules, showing how records would have changed in an alternate universe. Did bad luck hold you back, or were you truly dominant no matter the matchups?",
@@ -387,11 +487,17 @@ class Query():
             #     "type": "list",
             #     "data": top_opp_players_by_team
             # },
+            # {
+            #     "title": 'Greatest Comebacks',
+            #     "description": "The most impressive turnarounds of the season! This stat highlights the teams that overcame the largest point deficits to secure a victory in a single week, proving that no lead is ever safe.",
+            #     "type": "list",
+            #     "data": biggest_comebacks
+            # },
             {
-                "title": 'Greatest Comebacks',
-                "description": "The most impressive turnarounds of the season! This stat highlights the teams that overcame the largest point deficits to secure a victory in a single week, proving that no lead is ever safe.",
+                "title": 'The One That Got Away',
+                "description": 'These players were the ultimate "what could have been" stories of the season. After being dropped, they went on to rack up the most points—leaving their former managers with major regret.',
                 "type": "list",
-                "data": biggest_comebacks
+                "data": worst_drops
             },
         ]
         return metrics

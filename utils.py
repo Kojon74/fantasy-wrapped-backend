@@ -11,7 +11,8 @@ def xml_to_dict(xml_string):
 
         # Check if all children have the same tag (implying a list)
         child_tags = [strip_namespace(child.tag) for child in children]
-        is_list = len(set(child_tags)) == 1 and len(children) > 1
+        list_tags = ["players"]
+        is_list = strip_namespace(element.tag) in list_tags or len(set(child_tags)) == 1 and len(children) > 1 # TODO: 
 
         # Convert child elements into dictionary keys
         if is_list:
