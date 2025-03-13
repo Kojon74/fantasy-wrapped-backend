@@ -2,13 +2,16 @@ import os
 from yahoo_oauth import OAuth2
 import requests
 from requests.adapters import HTTPAdapter, Retry
-from utils import xml_to_dict
 from collections import defaultdict
 import unicodedata
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import asyncio
+import json
+import aiohttp
 
 from yahoo_oauth_wrapper import YahooOAuthWrapper
+from utils import xml_to_dict
 
 load_dotenv()
 CLIENT_ID = os.getenv("YAHOO_CONSUMER_KEY")
@@ -17,19 +20,26 @@ CLIENT_SECRET = os.getenv("YAHOO_CONSUMER_SECRET")
 BASE_URL = "https://fantasysports.yahooapis.com/fantasy/v2"
 
 class Query():
-    def __init__(self, league_key, token=None):
+    def __init__(self, league_key, token):
         self.num_requests = 0
-        self.oauth = self.authenticate(token)
-        
-        self.oauth.refresh_access_token() # In case access_token is already expired
-        self.session = self.init_session()
-
         self.league_key = league_key
         self.game_id, _, self.league_id = league_key.split(".")
-        self.get_league()
-        self.matchups = self.get_matchups()
         self.game_logs_cache = {}
-        self.game_weeks = self.get_game_weeks()
+
+        self.oauth = self.authenticate(token)
+        self.oauth.refresh_access_token() # In case access_token is already expired TODO remove
+        self.session = aiohttp.ClientSession() # Need to use Peresistent session rather that "with" which automatically closes session TODO: handle retry
+
+    @classmethod
+    async def create(cls, league_key, token=None):
+        # Handles async opereations on initialization
+        instance = cls(league_key, token)
+
+        await instance.get_league()
+        instance.matchups = await instance.get_matchups()
+        instance.game_weeks = await instance.get_game_weeks()
+        
+        return instance
 
     def authenticate(self, token):
         if not token:
@@ -37,7 +47,7 @@ class Query():
         return YahooOAuthWrapper(token["access_token"], token["refresh_token"])
 
     def init_session(self):
-        # TODO: Should I be using OAuth session?
+        # TODO: remove
         session = requests.Session()
         retries = Retry(
             total=5,
@@ -49,27 +59,28 @@ class Query():
         session.mount("https://", adapter)
         return session
 
-    def get_response(self, url):
+    async def get_response(self, url):
         self.num_requests += 1
         if not self.oauth.token_is_valid():
             self.oauth.refresh_access_token()
 
         headers = {
             "Authorization": f"Bearer {self.oauth.access_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json" # TODO: remove
         }
-        response = self.session.get(url, headers=headers)
-        if response.status_code != 200:
-            print(response)
-            print(response.text)
-            response.raise_for_status()
-        xml = response.text
-        data = xml_to_dict(response.text)
-        return data
+        async with self.session.get(url, headers=headers) as response:
+            xml = await response.text()
+            if response.status != 200:
+                print(response)
+                print(xml)
+                response.raise_for_status()
+            data = xml_to_dict(xml)
+            return data
 
-    def get_league(self):
+    async def get_league(self):
         url = f"{BASE_URL}/league/{self.league_key};out=standings,settings"
-        league = self.get_response(url)["league"]
+        response = await self.get_response(url)
+        league = response["league"]
         self.league_start_date_str = league["start_date"]
         self.league_end_date_str = league["end_date"]
         self.league_start_week = int(league["start_week"])
@@ -78,9 +89,10 @@ class Query():
         self.league_season = int(league["season"])
         self.teams = league["standings"]["teams"]
 
-    def get_game_weeks(self):
+    async def get_game_weeks(self):
         url = f"{BASE_URL}/game/{self.game_id}/game_weeks"
-        game_weeks = self.get_response(url)["game"]["game_weeks"]
+        response = await self.get_response(url)
+        game_weeks = response["game"]["game_weeks"]
         game_weeks[self.league_start_week-1]["start"] = self.league_start_date_str # Should it be -1 or -league_start_week?
         game_weeks[self.league_end_week-1]["end"] = self.league_end_date_str
         return game_weeks
@@ -105,28 +117,24 @@ class Query():
         team_name = next(team["name"] for team in self.teams if team["team_key"] == team_key)
         return team_name
 
-    def get_standings(self):
-        standings = [{"rank": i+1, "image_url": team["team_logos"]["team_logo"]["url"], "main_text": team["name"]} for i, team in enumerate(self.teams)]
-        return standings
-
-    def get_players(self, player_keys):
+    async def get_players(self, player_keys):
         return [
             player 
             for i in range(int(len(player_keys) / 25) + 1)
-            for player in self.get_response(
+            for player in (await self.get_response(
                 f"{BASE_URL}/league/{self.league_key}/players;player_keys={','.join(player_keys[i*25:min((i+1)*25, len(player_keys))])};start={i*25}/stats"
-            )["league"]["players"]
+            ))["league"]["players"]
         ]
 
-    def get_top_n_players_by_position(self, n, position):
+    async def get_top_n_players_by_position(self, n, position):
         if position == "F":
             position = "C,LW,RW"
         return [
             player 
             for i in range(int(n/25)+1) 
-            for player in self.get_response(
+            for player in (await self.get_response(
                 f"{BASE_URL}/league/{self.league_key}/players;sort=PTS;sort_type=season;position={position};count={n};start={i*25}/stats"
-            )["league"]["players"]
+            ))["league"]["players"]
         ]
 
     def normalize_name(self, name):
@@ -167,26 +175,28 @@ class Query():
             team = game["teamAbbrev"]
         return team
 
-    def get_matchups(self):
+    async def get_matchups(self):
         weeks = ",".join([str(week) for week in range(self.league_start_week, self.league_end_week + 1)])
         url = f"{BASE_URL}/league/{self.league_key}/scoreboard;week={weeks}"
-        return self.get_response(url)["league"]["scoreboard"]["matchups"]
+        response = await self.get_response(url)
+        return response["league"]["scoreboard"]["matchups"]
 
     def get_opp_team_by_week(self, team_key, week):
         # TODO make this a dict to improve performance so don't have to search through list every time
         opp_key = [matchup["teams"][0]["team_key"] if matchup["teams"][0]["team_key"] != team_key else matchup["teams"][1]["team_key"] for matchup in self.matchups if int(matchup["week"]) == week and team_key in [team["team_key"] for team in matchup["teams"]]]
         return opp_key[0] if len(opp_key) else None
 
-    def get_all_teams_daily_stats(self):
+    async def get_all_teams_daily_stats(self):
         start_date = datetime.strptime(self.league_start_date_str, "%Y-%m-%d")
         end_date = datetime.strptime(self.league_end_date_str, "%Y-%m-%d")
         dates = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range((end_date - start_date).days + 1)]
         url = f"{BASE_URL}/league/{self.league_key}/teams/stats_collection;types=date;date={','.join(dates)}"
-        all_teams_daily_stats = self.get_response(url)["league"]["teams"]
+        response = await self.get_response(url)
+        all_teams_daily_stats = response["league"]["teams"]
         all_teams_daily_stats_dict = {team["team_key"]: {team_points["date"]: float(team_points["total"]) for team_points in team["team_stats_collection"]["team_points"]} for team in all_teams_daily_stats} # Preprocess into dict for constant time lookup {[team_key: str]: {[date: str]: float}}
         return all_teams_daily_stats_dict
 
-    def get_players_points_by_date(self, player_team_dict, dates): # Look into whether or not its possible to do multiple dates in a single request
+    async def get_players_points_by_date(self, player_team_dict, dates): # Look into whether or not its possible to do multiple dates in a single request
         if not player_team_dict:
             return {}
         player_keys = list(player_team_dict.keys())
@@ -196,7 +206,8 @@ class Query():
             for i in range(0, len(player_keys), 25):
                 player_keys_csv = ",".join(player_keys[i:min(i+25, len(player_keys))])
                 url = f'{BASE_URL}/league/{self.league_key}/players;player_keys={player_keys_csv}/stats;type=date;date={date_str}'
-                players_stats_by_date = self.get_response(url)["league"]["players"]
+                response = await self.get_response(url)
+                players_stats_by_date = response["league"]["players"]
                 for player in players_stats_by_date:
                     if player["player_key"] not in points_by_player:
                         points_by_player[player["player_key"]]["name"] = player["name"]["full"]
@@ -205,7 +216,16 @@ class Query():
                     points_by_player[player["player_key"]]["points"] = round(points_by_player[player["player_key"]]["points"] + float(player["player_points"]["total"]), 1)
         return points_by_player
 
-    def get_alternative_realities(self):
+    async def cleanup(self):
+        await self.session.close()
+
+    ### Metric calculation functions ###
+
+    async def get_standings(self):
+        standings = [{"rank": i+1, "image_url": team["team_logos"]["team_logo"]["url"], "main_text": team["name"]} for i, team in enumerate(self.teams)]
+        return [{"id": "official_standings", "data": standings}]
+    
+    async def get_alternative_realities(self):
         """
         Returns:
         alternative_reality_matrix (float[][]): Matrix of records if each team had another teams schedule
@@ -215,7 +235,8 @@ class Query():
         num_reg_weeks = self.playoff_start_week - self.league_start_week
         weeks = ",".join([str(week) for week in range(self.league_start_week, self.playoff_start_week)])
         url = f"{BASE_URL}/league/{self.league_key}/scoreboard;week={weeks}/matchups"
-        matchups = self.get_response(url)["league"]["scoreboard"]["matchups"]
+        response = await self.get_response(url)
+        matchups = response["league"]["scoreboard"]["matchups"]
         team_schedules = defaultdict(lambda: {"points": [], "opponent": []})
         for matchup in matchups:
             teams = matchup["teams"]
@@ -230,20 +251,21 @@ class Query():
                 percent = format(round(sum(results)/len(results), 3), ".3f")
                 team_schedule_matrix[i][j] = percent
         team_order = [self.get_team_name_from_key(team_key) for team_key in team_schedules.keys()]
-        print(f'Alternative Realities: {self.num_requests}')
-        return team_schedule_matrix, team_order
+        # print(f'Alternative Realities: {self.num_requests}')
+        return [{"id": "alternative_realities", "data": team_schedule_matrix, "headers": team_order}]
 
-    def get_draft_busts_steals(self):
+    async def get_draft_busts_steals(self):
         '''
         Biggest draft busts/steals
         '''
         self.num_requests = 0
         # Get draft results
         url = f"{BASE_URL}/league/{self.league_key}/draftresults"
-        draft_results = self.get_response(url)["league"]["draft_results"]
+        response = await self.get_response(url)
+        draft_results = response["league"]["draft_results"]
         # draft results doesn't return player stats
         draft_player_keys = [draft_result["player_key"] for draft_result in draft_results]
-        draft_players = self.get_players(draft_player_keys)
+        draft_players = await self.get_players(draft_player_keys)
         # Add some way to refeerence back to the team that drafted each player
         for draft_player, draft_results in zip(draft_players, draft_results): # TODO: See if using list comprehension would be faster, would be moree memory intensive
             draft_player["team_key"] = draft_results["team_key"]
@@ -253,9 +275,9 @@ class Query():
             draft_players_by_pos[positions_map[draft_player["primary_position"]]].append(draft_player)
         # Get the top players by position
         top_players_by_pos = {
-            "F": self.get_top_n_players_by_position(len(draft_players_by_pos["F"]), "F"), 
-            "D": self.get_top_n_players_by_position(len(draft_players_by_pos["D"]), "D"), 
-            "G": self.get_top_n_players_by_position(len(draft_players_by_pos["G"]), "G")
+            "F": await self.get_top_n_players_by_position(len(draft_players_by_pos["F"]), "F"), 
+            "D": await self.get_top_n_players_by_position(len(draft_players_by_pos["D"]), "D"), 
+            "G": await self.get_top_n_players_by_position(len(draft_players_by_pos["G"]), "G")
         }
         # Get differences between draft player and top player
         diffs = []
@@ -267,10 +289,10 @@ class Query():
         biggest_diff = sorted(diffs, reverse=True, key=lambda x: x[0])
         draft_busts = [{"rank": i+1, "image_url": player["image_url"], "main_text": player["name"]["full"], "sub_text": self.get_team_name_from_key(player["team_key"]), "stat": f"{format(diff, '.1f')} pts"} for i, [diff, player] in enumerate(smallest_diff[:5])]
         draft_steals = [{"rank": i+1, "image_url": player["image_url"], "main_text": player["name"]["full"], "sub_text": self.get_team_name_from_key(player["team_key"]), "stat": f"+{format(diff, '.1f')} pts"} for i, [diff, player] in enumerate(biggest_diff[:5])]
-        print(f'Draft Busts/Steals: {self.num_requests}')
-        return draft_busts, draft_steals
+        # print(f'Draft Busts/Steals: {self.num_requests}')
+        return [{"id": "draft_busts", "data": draft_busts}, {"id": "draft_steals", "data": draft_steals}]
 
-    def get_team_season_data(self):
+    async def get_team_season_data(self):
         """
         Returns:
         NHL team that contributed most to each team
@@ -292,7 +314,8 @@ class Query():
                     continue
                 week_end_date = self.get_dates_by_week(week)[-1]
                 url = f"{BASE_URL}/team/{team['team_key']}/roster;week={week}/players/stats;type=week;week={week}"
-                roster_players = self.get_response(url)["team"]["roster"]["players"]
+                response = await self.get_response(url)
+                roster_players = response["team"]["roster"]["players"]
                 for player in roster_players:
                     hits_by_team[team["team_key"]] += next(iter([int(stat["value"]) for stat in player["player_stats"]["stats"] if int(stat["stat_id"]) == HITS_STAT_ID and stat["value"] != "-"]), 0)
                     
@@ -337,17 +360,17 @@ class Query():
         top_opp_player_by_team = {k: sorted(v.values(), key=lambda x: x["points"], reverse=True)[0] for k, v in opp_players_by_team.items()}
         top_opp_player_by_team_sorted = sorted(top_opp_player_by_team.items(), key=lambda x: x[1]["points"], reverse=True)
         top_opp_player_by_team_sorted_ret = [{"rank": i+1, "image_url": v["image_url"], "main_text": v["name"], "sub_text": self.get_team_name_from_key(k), "stat": f'{format(round(v["points"], 1), ".1f")} pts'} for i, [k, v] in enumerate(top_opp_player_by_team_sorted)]
-        print(f'Top Players: {self.num_requests}')
-        return top_player_by_team_sorted_ret, top_opp_player_by_team_sorted_ret
+        # print(f'Top Players: {self.num_requests}')
+        return [{"id": "one_man_army", "data": top_player_by_team_sorted_ret}, {"id": "team_tormentor", "data": top_opp_player_by_team_sorted_ret}]
 
-    def get_biggest_comebacks(self):
+    async def get_biggest_comebacks(self):
         '''
         Biggest comeback
         52.8s
         '''
         self.num_requests = 0
         deficits = []
-        all_teams_daily_stats = self.get_all_teams_daily_stats()
+        all_teams_daily_stats = await self.get_all_teams_daily_stats()
         for matchup in self.matchups:
             # Comeback win can't happen without a winner
             if int(matchup["is_tied"]):
@@ -370,12 +393,12 @@ class Query():
         biggest_deficits = list({f'{matchup["week"]}.{matchup["winner_team_key"]}': (deficit, matchup) for (deficit, matchup) in biggest_deficits}.values()) # This removes duplicates from same matchup
         biggest_deficits = sorted(biggest_deficits, reverse=True, key=lambda x: x[0])
         biggest_combacks = [{"rank": i+1, "image_url": matchup["team_image_url"], "main_text": matchup["team_name"], "sub_text": f'Week {matchup["week"]} vs {matchup["opp_team_name"]}', "stat": f"{format(deficit, '.1f')} pts"} for i, [deficit, matchup] in enumerate(biggest_deficits[:5])]
-        print(f'Biggest Comebacks: {self.num_requests}')
-        return biggest_combacks
+        # print(f'Biggest Comebacks: {self.num_requests}')
+        return [{"id": "biggest_comeback", "data": biggest_combacks}]
 
-    def get_worst_drops(self):
-        def update_drop_players_points(drop_players_dict, dates):
-            drop_players_points_cur = self.get_players_points_by_date(drop_players_dict, dates)
+    async def get_worst_drops(self):
+        async def update_drop_players_points(drop_players_dict, dates):
+            drop_players_points_cur = await self.get_players_points_by_date(drop_players_dict, dates)
             for player_key, drop_player in drop_players_points_cur.items():
                 for team_key in drop_player["team_keys"]:
                     key = player_key + team_key
@@ -394,7 +417,8 @@ class Query():
 
         self.num_requests = 0
         url = f'{BASE_URL}/league/{self.league_key}/transactions'
-        transactions = list(reversed(self.get_response(url)["league"]["transactions"]))
+        response = await self.get_response(url)
+        transactions = list(reversed(response["league"]["transactions"]))
         last_transaction_date = datetime.strptime(self.league_start_date_str, "%Y-%m-%d")
         drop_players_dict = defaultdict(set)
         drop_players_remove = []
@@ -411,7 +435,7 @@ class Query():
                     transaction_date = datetime.fromtimestamp(int(transaction["timestamp"]))
                     if transaction_date.strftime("%Y-%m-%d") != last_transaction_date.strftime("%Y-%m-%d"):
                         dates = get_dates(last_transaction_date, transaction_date)
-                        update_drop_players_points(drop_players_dict, dates)
+                        await update_drop_players_points(drop_players_dict, dates)
                         if transaction_date > datetime.strptime(self.league_end_date_str, "%Y-%m-%d"):
                             done = True
                             break
@@ -428,10 +452,10 @@ class Query():
             # If last transaction was not on or past the league end date, get points until league end date
             league_end_date = datetime.strptime(self.league_end_date_str, "%Y-%m-%d")
             dates = get_dates(last_transaction_date, league_end_date)
-            update_drop_players_points(drop_players_dict, dates)
-        print(self.num_requests)
+            await update_drop_players_points(drop_players_dict, dates)
+        # print(self.num_requests)
         worst_drops = sorted(drop_players_points.values(), key=lambda x: x["points"], reverse=True)[:10]
-        return [
+        worst_drops = [
             {
                 "rank": i+1, 
                 "image_url": worst_drop["image_url"], 
@@ -441,63 +465,66 @@ class Query():
             } 
             for i, worst_drop in enumerate(worst_drops)
         ]
+        return [{"id": "the_one_that_got_away", "data": worst_drops}]
 
-    def get_metrics(self):
-        # standings = self.get_standings()
-        # alternative_reality_matrix, team_order = self.get_alternative_realities()
-        # draft_busts, draft_steals = self.get_draft_busts_steals()
-        # top_players_by_team, top_opp_players_by_team = self.get_team_season_data()
-        # biggest_comebacks = self.get_biggest_comebacks()
-        worst_drops = self.get_worst_drops()
-        metrics = [
-            # {
-            #     "title": '"Official" Results',
-            #     "description": "Sure, these are the official results. But were they really the best team? The luckiest? The biggest flop? Keep scrolling to uncover the real winners and losers of the season.",
-            #     "type": "list",
-            #     "data": standings
-            # },
-            # {
-            #     "title": 'Alternative Realities',
-            #     "description": "What if your team had a different schedule? This matrix reimagines the season by swapping team schedules, showing how records would have changed in an alternate universe. Did bad luck hold you back, or were you truly dominant no matter the matchups?",
-            #     "type": "table",
-            #     "headers": team_order,
-            #     "data": alternative_reality_matrix
-            # },
-            # {
-            #     "title": 'Draft Steal',
-            #     "description": "Some picks turn out to be absolute gems! This metric highlights the player who delivered the biggest return on investment, massively outperforming their draft position. Whether it was a late-round sleeper who dominated or a mid-round pick who played like a first-rounder, this is your league's ultimate steal of the draft.",
-            #     "type": "list",
-            #     "data": draft_steals
-            # },
-            # {
-            #     "title": 'Draft Bust',
-            #     "description": "Not all picks live up to the hype. This metric identifies the player who fell the hardest from expectations, drastically underperforming their draft position. Whether it was due to injuries, poor form, or just bad luck, this was the pick that stung the most for fantasy managers.",
-            #     "type": "list",
-            #     "data": draft_busts
-            # },
-            # {
-            #     "title": 'One-Man Army',
-            #     "description": "This metric highlights the player who carried the biggest scoring burden for their team by contributing the highest percentage of their team’s total points. It showcases which players were the most crucial to their team’s success, whether due to elite performance or a lack of supporting cast. A high percentage means this player was the go-to option, shouldering most of the team’s fantasy production.",
-            #     "type": "list",
-            #     "data": top_players_by_team
-            # },
-            # {
-            #     "title": 'Team Tormentor',
-            #     "description": "This metric identifies the player who scored the most total points against a single team, revealing their toughest matchup.",
-            #     "type": "list",
-            #     "data": top_opp_players_by_team
-            # },
-            # {
-            #     "title": 'Greatest Comebacks',
-            #     "description": "The most impressive turnarounds of the season! This stat highlights the teams that overcame the largest point deficits to secure a victory in a single week, proving that no lead is ever safe.",
-            #     "type": "list",
-            #     "data": biggest_comebacks
-            # },
-            {
+    async def get_metrics(self):
+        tasks = [
+            self.get_standings(),
+            self.get_alternative_realities(),
+            self.get_draft_busts_steals(),
+            self.get_team_season_data(),
+            self.get_biggest_comebacks(),
+            self.get_worst_drops(),
+        ]
+        metrics_meta = {
+            "official_standings": {
+                "title": '"Official" Results',
+                "description": "Sure, these are the official results. But were they really the best team? The luckiest? The biggest flop? Keep scrolling to uncover the real winners and losers of the season.",
+                "type": "list",
+            },
+            "alternative_realities": {
+                "title": 'Alternative Realities',
+                "description": "What if your team had a different schedule? This matrix reimagines the season by swapping team schedules, showing how records would have changed in an alternate universe. Did bad luck hold you back, or were you truly dominant no matter the matchups?",
+                "type": "table",
+            },
+            "draft_busts": {
+                "title": 'Draft Steal',
+                "description": "Some picks turn out to be absolute gems! This metric highlights the player who delivered the biggest return on investment, massively outperforming their draft position. Whether it was a late-round sleeper who dominated or a mid-round pick who played like a first-rounder, this is your league's ultimate steal of the draft.",
+                "type": "list",
+            },
+            "draft_steals": {
+                "title": 'Draft Bust',
+                "description": "Not all picks live up to the hype. This metric identifies the player who fell the hardest from expectations, drastically underperforming their draft position. Whether it was due to injuries, poor form, or just bad luck, this was the pick that stung the most for fantasy managers.",
+                "type": "list",
+            },
+            "one_man_army": {
+                "title": 'One-Man Army',
+                "description": "This metric highlights the player who carried the biggest scoring burden for their team by contributing the highest percentage of their team’s total points. It showcases which players were the most crucial to their team’s success, whether due to elite performance or a lack of supporting cast. A high percentage means this player was the go-to option, shouldering most of the team’s fantasy production.",
+                "type": "list",
+            },
+            "team_tormentor": {
+                "title": 'Team Tormentor',
+                "description": "This metric identifies the player who scored the most total points against a single team, revealing their toughest matchup.",
+                "type": "list",
+            },
+            "biggest_comeback": {
+                "title": 'Greatest Comebacks',
+                "description": "The most impressive turnarounds of the season! This stat highlights the teams that overcame the largest point deficits to secure a victory in a single week, proving that no lead is ever safe.",
+                "type": "list",
+            },
+            "the_one_that_got_away": {
                 "title": 'The One That Got Away',
                 "description": 'These players were the ultimate "what could have been" stories of the season. After being dropped, they went on to rack up the most points—leaving their former managers with major regret.',
                 "type": "list",
-                "data": worst_drops
             },
-        ]
-        return metrics
+        }
+        for task in asyncio.as_completed(tasks): # Yields tasks as they are completed
+            results = await task # Expects each task to return an array
+            for i, result in enumerate(results):
+                resp_val = metrics_meta[result["id"]]
+                resp_val["data"] = result["data"]
+                if "headers" in result: # For alternative realities
+                    resp_val["headers"] = result["headers"]
+                json_resp_val = json.dumps(resp_val) # StreamingResponse expects iterable of bytes or strings 
+                yield f"{json_resp_val}\n\n" if i == 0 else f"data: {json_resp_val}\n\n" # SSE requires "data: " prefix: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#data
+        await self.cleanup()
