@@ -14,11 +14,12 @@ BASE_URL = "https://fantasysports.yahooapis.com/fantasy/v2"
 
 
 class Query:
-    def __init__(self, league_key, token):
+    def __init__(self, league_key, token, doc_ref):
         self.num_requests = 0
         self.league_key = league_key
         self.game_id, _, self.league_id = league_key.split(".")
         self.game_logs_cache = {}
+        self.doc_ref = doc_ref
 
         self.oauth = authenticate(token)
         self.oauth.refresh_access_token()  # Initialize self.token_time
@@ -27,9 +28,9 @@ class Query:
         )  # Need to use Peresistent session rather that "with" which automatically closes session TODO: handle retry
 
     @classmethod
-    async def create(cls, league_key, token=None):
+    async def create(cls, league_key, token=None, doc_ref=None):
         # Handles async opereations on initialization
-        instance = cls(league_key, token)
+        instance = cls(league_key, token, doc_ref)
 
         await instance.get_league()
         instance.matchups = await instance.get_matchups()
@@ -285,10 +286,10 @@ class Query:
         tasks = [
             metrics.get_standings(),
             metrics.get_alternative_realities(),
-            metrics.get_draft_busts_steals(),
-            metrics.get_team_season_data(),
-            metrics.get_biggest_comebacks(),
-            metrics.get_worst_drops(),
+            # metrics.get_draft_busts_steals(),
+            # metrics.get_team_season_data(),
+            # metrics.get_biggest_comebacks(),
+            # metrics.get_worst_drops(),
         ]
         metrics_meta = {
             "official_standings": {
@@ -332,17 +333,21 @@ class Query:
                 "type": "list",
             },
         }
+        all_metrics = []
         for task in asyncio.as_completed(tasks):  # Yields tasks as they are completed
             results = await task  # Expects each task to return an array
+            resp_vals = []
             for i, result in enumerate(results):
                 resp_val = metrics_meta[result["id"]]
                 resp_val["data"] = result["data"]
                 if "headers" in result:  # For alternative realities
                     resp_val["headers"] = result["headers"]
-                json_resp_val = json.dumps(
-                    resp_val
-                )  # StreamingResponse expects iterable of bytes or strings
-                yield (
-                    f"{json_resp_val}\n\n" if i == 0 else f"data: {json_resp_val}\n\n"
-                )  # SSE requires "data: " prefix: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#data
+                resp_vals.append(resp_val)
+            json_resp_vals = json.dumps(
+                resp_vals
+            )  # StreamingResponse expects iterable of bytes or strings
+            all_metrics.append(json_resp_vals)
+            yield (json_resp_vals)
+        if self.doc_ref:
+            self.doc_ref.set({"metrics": all_metrics})
         await self.cleanup()

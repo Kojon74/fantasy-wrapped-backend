@@ -1,6 +1,7 @@
 # Secrets and environment variables
 .env
 secrets.json
+fantasy-warped-firebase-adminsdk-fbsvc-1fd9535117.json
 
 # Virtual environments
 fantasy_env/
