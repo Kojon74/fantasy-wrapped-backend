@@ -1,5 +1,6 @@
 import xml.etree.ElementTree as ET
 
+
 def xml_to_dict(xml_string):
     def strip_namespace(tag):
         """Remove namespace from the tag name."""
@@ -11,12 +12,18 @@ def xml_to_dict(xml_string):
 
         # Check if all children have the same tag (implying a list)
         child_tags = [strip_namespace(child.tag) for child in children]
-        list_tags = ["players"]
-        is_list = strip_namespace(element.tag) in list_tags or len(set(child_tags)) == 1 and len(children) > 1 # TODO: 
+        list_tags = ["players"]  # TODO: find more list tags
+        is_list = (
+            strip_namespace(element.tag) in list_tags
+            or len(set(child_tags)) == 1
+            and len(children) > 1
+        )
 
         # Convert child elements into dictionary keys
         if is_list:
-            return [parse_element(child) for child in children]  # Return a list directly
+            return [
+                parse_element(child) for child in children
+            ]  # Return a list directly
         else:
             for child in children:
                 tag = strip_namespace(child.tag)
@@ -39,3 +46,10 @@ def xml_to_dict(xml_string):
 
     root = ET.fromstring(xml_string)
     return parse_element(root)
+
+
+def normalize_name(self, name):
+    # Normalize the name to NFKD form and remove diacritics
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", name) if not unicodedata.combining(c)
+    )

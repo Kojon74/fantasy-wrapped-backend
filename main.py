@@ -7,11 +7,12 @@ import aiohttp
 
 app = FastAPI(debug=True)
 
+
 @app.get("/wrapped/{league_key}")
 async def get_fantasy_wrapped(
-    league_key: str, 
-    authorization: Annotated[str | None, Header()] = None, 
-    x_refresh_token: Annotated[str | None, Header()] = None
+    league_key: str,
+    authorization: Annotated[str | None, Header()] = None,
+    x_refresh_token: Annotated[str | None, Header()] = None,
 ):
     if not authorization or not authorization.startswith("Bearer "):
         return jsonify({"error": "Missing or invalid access token"}), 401

@@ -10,14 +10,15 @@ CLIENT_SECRET = os.getenv("YAHOO_CONSUMER_SECRET")
 oauth_service = {
     "SERVICE": OAuth2Service,
     "AUTHORIZE_TOKEN_URL": "https://api.login.yahoo.com/oauth2/request_auth",
-    "ACCESS_TOKEN_URL": "https://api.login.yahoo.com/oauth2/get_token"
+    "ACCESS_TOKEN_URL": "https://api.login.yahoo.com/oauth2/get_token",
 }
 
-CALLBACK_URI = 'oob'
+CALLBACK_URI = "oob"
 
 STORE_FILE_FLAG = True
 
 BASE_URL = "https://fantasysports.yahooapis.com/fantasy/v2"
+
 
 class YahooOAuthWrapper(BaseOAuth):
     def __init__(self, access_token, refresh_token):
@@ -29,12 +30,12 @@ class YahooOAuthWrapper(BaseOAuth):
         self.callback_uri = CALLBACK_URI
         self.store_file = STORE_FILE_FLAG
         service_params = {
-            'client_id': self.consumer_key,
-            'client_secret': self.consumer_secret,
-            'name': 'yahoo',
-            'access_token_url': oauth_service['ACCESS_TOKEN_URL'],
-            'authorize_url': oauth_service['AUTHORIZE_TOKEN_URL'],
-            'base_url': BASE_URL
+            "client_id": self.consumer_key,
+            "client_secret": self.consumer_secret,
+            "name": "yahoo",
+            "access_token_url": oauth_service["ACCESS_TOKEN_URL"],
+            "authorize_url": oauth_service["AUTHORIZE_TOKEN_URL"],
+            "base_url": BASE_URL,
         }
 
         # Defining oauth service
