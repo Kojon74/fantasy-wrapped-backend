@@ -487,3 +487,36 @@ class Metrics:
             for i, worst_drop in enumerate(worst_drops)
         ]
         return [{"id": "the_one_that_got_away", "data": worst_drops}]
+
+    async def get_most_dropped_players(self):
+        url = f"/league/{self.query.league_key}/transactions"
+        response = await self.query.get_response(url)
+        transactions = response['league']['transactions']
+        drops = {}
+        missed = 0
+        for transaction in transactions:
+            if (transaction['type'] == 'drop') and transaction['status'] == 'successful':
+                try:
+                    drops[transaction['players'][0]['player_key']][1] += 1
+                except:
+                    drops[transaction['players'][0]['player_key']] = [transaction['players'][0]['name']['full'], 1]
+            elif transaction['type'] == 'add/drop' and transaction['status'] == 'successful':
+                try:
+                    drops[transaction['players'][1]['player_key']][1] += 1
+                except:
+                    drops[transaction['players'][1]['player_key']] = [transaction['players'][1]['name']['full'], 1]
+
+        drops = dict(sorted(drops.items(), key=lambda item: item[1][1], reverse=True))
+        top_x = 10
+        players = await self.query.get_players(list(drops.keys())[:top_x])   
+        top_drops_list = [
+            {
+                "rank": i+1,
+                "image_url": players[i]['image_url'],
+                "main_text": list(drops.values())[i][1],
+                "sub_test": "",
+                "stat": list(drops.values())[i][0]
+            } for i in range(top_x)
+        ]
+        
+        return top_drops_list
