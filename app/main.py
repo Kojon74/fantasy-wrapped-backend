@@ -1,13 +1,9 @@
 from typing import Annotated
 from fastapi import FastAPI, Header
 from fastapi.responses import StreamingResponse
-from query import Query
-import asyncio
-import aiohttp
-import firebase_admin
-from firebase_admin import credentials, firestore
 import json
 
+from query import Query
 from firebase import initialize_firebase
 
 app = FastAPI(debug=True)
@@ -20,7 +16,7 @@ async def get_fantasy_wrapped(
     x_refresh_token: Annotated[str | None, Header()] = None,
 ):
     if not authorization or not authorization.startswith("Bearer "):
-        return jsonify({"error": "Missing or invalid access token"}), 401
+        return json.dumps({"error": "Missing or invalid access token"}), 401
     db = initialize_firebase()
     doc_ref = db.collection("wrapped").document(league_key)
     doc = doc_ref.get()

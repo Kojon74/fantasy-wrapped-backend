@@ -293,6 +293,7 @@ class Query:
             metrics.get_team_season_data(),
             metrics.get_biggest_comebacks(),
             metrics.get_worst_drops(),
+            metrics.get_most_dropped_players(),
         ]
         metrics_meta = {
             "official_standings": {
@@ -333,6 +334,11 @@ class Query:
             "the_one_that_got_away": {
                 "title": "The One That Got Away",
                 "description": 'These players were the ultimate "what could have been" stories of the season. After being dropped, they went on to rack up the most points—leaving their former managers with major regret.',
+                "type": "list",
+            },
+            "most_dropped": {
+                "title": "Hot Potato",
+                "description": "These players just couldn’t find a permanent home! This metric highlights the most frequently added and dropped players of the season, showing which names cycled through the league the most.",
                 "type": "list",
             },
         }
