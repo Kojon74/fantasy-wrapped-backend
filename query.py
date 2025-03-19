@@ -66,6 +66,10 @@ class Query:
         self.playoff_start_week = int(
             league["settings"].get("playoff_start_week", None)
         )
+        self.league_roster_positions = [
+            {roster_position["position"]: roster_position["count"]}
+            for roster_position in league["settings"]["roster_positions"]
+        ]
         self.league_season = int(league["season"])
         self.teams = league["standings"]["teams"]
 
@@ -96,6 +100,7 @@ class Query:
         """
         Returns:
         {[team_key: string]: {team_image: string, team_name: string, team_nickname: string}}
+        TODO: Switch all reefreencees to teams to this
         """
         teams_dict = {
             team["team_key"]: {
@@ -114,6 +119,9 @@ class Query:
         return team_name
 
     async def get_players(self, player_keys):
+        """
+        Returns a list of players with their details and stats for the season
+        """
         return [
             player
             for i in range(int(len(player_keys) / 25) + 1)
