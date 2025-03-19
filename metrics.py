@@ -133,8 +133,8 @@ class Metrics:
                 draft_players_by_pos[pos], top_players_by_pos[pos]
             ):
                 diff = round(
-                    float(draft_player["player_points"]["total"])
-                    - float(top_player["player_points"]["total"]),
+                    float(draft_player["player_points"][0]["total"])
+                    - float(top_player["player_points"][0]["total"]),
                     1,
                 )
                 diffs.append((diff, draft_player))
@@ -201,7 +201,7 @@ class Metrics:
                         iter(
                             [
                                 int(stat["value"])
-                                for stat in player["player_stats"]["stats"]
+                                for stat in player["player_stats"][0]["stats"]
                                 if int(stat["stat_id"]) == HITS_STAT_ID
                                 and stat["value"] != "-"
                             ]
@@ -209,7 +209,7 @@ class Metrics:
                         0,
                     )
 
-                    if not player["player_points"]["total"]:
+                    if not player["player_points"][0]["total"]:
                         # Can skip rest if no points
                         continue
 
@@ -222,7 +222,7 @@ class Metrics:
                             player["image_url"]
                         )
                     team_points_by_player[player["player_key"]]["points"] += float(
-                        player["player_points"]["total"]
+                        player["player_points"][0]["total"]
                     )
 
                     # Team points by opposing player
@@ -238,12 +238,12 @@ class Metrics:
                         ] = player["image_url"]
                     opp_players_by_team[opp_team][player["player_key"]][
                         "points"
-                    ] += float(player["player_points"]["total"])
+                    ] += float(player["player_points"][0]["total"])
 
                     # Team points by NHL team
                     # player_game_log = self.query.get_game_log_by_player(player["player_key"], player["name"]["full"], player["display_position"])
                     # nhl_team = self.query.get_player_team_on_date(player_game_log, week_end_date)
-                    # team_points_by_nhl_team[nhl_team] += float(player["player_points"]["total"])
+                    # team_points_by_nhl_team[nhl_team] += float(player["player_points"][0]["total"])
 
             team_points_by_nhl_team = sorted(
                 team_points_by_nhl_team.items(), key=lambda item: item[1], reverse=True
@@ -371,11 +371,12 @@ class Metrics:
 
     async def get_worst_drops(self):
         async def update_drop_players_points(drop_players_dict, dates):
+            players = list(drop_players_dict.keys())
             drop_players_points_cur = await self.query.get_players_points_by_date(
-                drop_players_dict, dates
+                players, dates
             )
             for player_key, drop_player in drop_players_points_cur.items():
-                for team_key in drop_player["team_keys"]:
+                for team_key in drop_players_dict[player_key]:
                     key = player_key + team_key
                     if key not in drop_players_points:
                         drop_players_points[key]["player_name"] = drop_player["name"]

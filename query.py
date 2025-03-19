@@ -1,7 +1,6 @@
 import requests
 from collections import defaultdict
 from datetime import datetime, timedelta
-import unicodedata
 import asyncio
 import json
 import aiohttp
@@ -242,40 +241,36 @@ class Query:
         }  # Preprocess into dict for constant time lookup {[team_key: str]: {[date: str]: float}}
         return all_teams_daily_stats_dict
 
-    async def get_players_points_by_date(
-        self, player_team_dict, dates
-    ):  # Look into whether or not its possible to do multiple dates in a single request
-        if not player_team_dict:
-            return {}
-        player_keys = list(player_team_dict.keys())
-        points_by_team = defaultdict(float)
+    async def get_players_points_by_date(self, player_keys, dates):
         points_by_player = defaultdict(
-            lambda: {"name": None, "image_url": None, "team_name": None, "points": 0}
+            lambda: {"name": None, "image_url": None, "points": 0}
         )
-        for date_str in dates:
-            for i in range(0, len(player_keys), 25):
-                player_keys_csv = ",".join(
-                    player_keys[i : min(i + 25, len(player_keys))]
-                )
-                url = f"/league/{self.league_key}/players;player_keys={player_keys_csv}/stats;type=date;date={date_str}"
-                response = await self.get_response(url)
-                players_stats_by_date = response["league"]["players"]
-                for player in players_stats_by_date:
-                    if player["player_key"] not in points_by_player:
-                        points_by_player[player["player_key"]]["name"] = player["name"][
-                            "full"
-                        ]
-                        points_by_player[player["player_key"]]["image_url"] = player[
-                            "image_url"
-                        ]
-                        points_by_player[player["player_key"]]["team_keys"] = list(
-                            player_team_dict[player["player_key"]]
+        dates_csv = ",".join(dates)
+        for i in range(0, len(player_keys), 25):
+            player_keys_csv = ",".join(player_keys[i : min(i + 25, len(player_keys))])
+            url = f"/league/{self.league_key}/players;player_keys={player_keys_csv}/stats_collection;types=date;date={dates_csv}"
+            response = await self.get_response(url)
+            players_stats_for_dates = response["league"]["players"]
+            for player in players_stats_for_dates:
+                if player["player_key"] not in points_by_player:
+                    points_by_player[player["player_key"]]["name"] = player["name"][
+                        "full"
+                    ]
+                    points_by_player[player["player_key"]]["image_url"] = player[
+                        "image_url"
+                    ]
+                points_by_player[player["player_key"]]["points"] = round(
+                    points_by_player[player["player_key"]]["points"]
+                    + float(
+                        sum(
+                            float(player_points_date["total"])
+                            for player_points_date in player["player_stats_collection"][
+                                "player_points"
+                            ]
                         )
-                    points_by_player[player["player_key"]]["points"] = round(
-                        points_by_player[player["player_key"]]["points"]
-                        + float(player["player_points"]["total"]),
-                        1,
-                    )
+                    ),
+                    1,
+                )
         return points_by_player
 
     async def cleanup(self):
@@ -286,10 +281,10 @@ class Query:
         tasks = [
             metrics.get_standings(),
             metrics.get_alternative_realities(),
-            # metrics.get_draft_busts_steals(),
-            # metrics.get_team_season_data(),
-            # metrics.get_biggest_comebacks(),
-            # metrics.get_worst_drops(),
+            metrics.get_draft_busts_steals(),
+            metrics.get_team_season_data(),
+            metrics.get_biggest_comebacks(),
+            metrics.get_worst_drops(),
         ]
         metrics_meta = {
             "official_standings": {

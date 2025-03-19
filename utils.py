@@ -1,7 +1,10 @@
 import xml.etree.ElementTree as ET
+import unicodedata
 
 
 def xml_to_dict(xml_string):
+    # print(xml_string)
+
     def strip_namespace(tag):
         """Remove namespace from the tag name."""
         return tag.split("}")[-1] if "}" in tag else tag
@@ -34,6 +37,8 @@ def xml_to_dict(xml_string):
                     if not isinstance(parsed_data[tag], list):
                         parsed_data[tag] = [parsed_data[tag]]
                     parsed_data[tag].append(child_data)
+                elif tag in ["player_points", "player_stats"]:
+                    parsed_data[tag] = [child_data]
                 else:
                     parsed_data[tag] = child_data
 
@@ -48,7 +53,7 @@ def xml_to_dict(xml_string):
     return parse_element(root)
 
 
-def normalize_name(self, name):
+def normalize_name(name):
     # Normalize the name to NFKD form and remove diacritics
     return "".join(
         c for c in unicodedata.normalize("NFKD", name) if not unicodedata.combining(c)

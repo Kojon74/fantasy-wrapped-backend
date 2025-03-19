@@ -1,0 +1,7 @@
+aiohttp==3.11.13
+fastapi==0.115.11
+firebase_admin==6.7.0
+python-dotenv==1.0.1
+rauth==0.7.3
+Requests==2.32.3
+yahoo_oauth==2.1.1
