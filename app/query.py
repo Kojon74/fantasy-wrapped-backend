@@ -294,6 +294,7 @@ class Query:
             metrics.get_biggest_comebacks(),
             metrics.get_worst_drops(),
             metrics.get_most_dropped_players(),
+            metrics.get_best_worst_drafts(),
         ]
         metrics_meta = {
             "official_standings": {
@@ -339,6 +340,11 @@ class Query:
             "most_dropped": {
                 "title": "Hot Potato",
                 "description": "These players just couldn’t find a permanent home! This metric highlights the most frequently added and dropped players of the season, showing which names cycled through the league the most.",
+                "type": "list",
+            },
+            "best_worst_drafts": {
+                "title": "Draft Guru",
+                "description": "Some managers are elite scouts and have a keen eye for talent! Let's take a look at who had the best drafts in your league (let's just hope they didn't drop their drafted players)",
                 "type": "list",
             },
         }

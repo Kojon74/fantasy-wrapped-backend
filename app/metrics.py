@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
+import pandas as pd
 
 
 class Metrics:
@@ -532,3 +533,37 @@ class Metrics:
         ]
 
         return [{"id": "most_dropped", "data": top_drops_list}]
+    
+    async def get_best_worst_drafts(self):
+        url = f"/league/{self.query.league_key}/draftresults"
+        response = await self.query.get_response(url)
+        full_draft = response['league']['draft_results']
+        full_draft = pd.DataFrame(data=full_draft, columns=['pick', 'round', 'team_key', 'player_key'])
+        teams = self.query.get_teams()
+        team_keys = tuple(teams.keys())
+        team_drafts = {self.query.get_team_name_from_key(team_key) : full_draft[full_draft["team_key"] == team_key] for team_key in team_keys}
+        ranked_drafts_list = []
+        i=0
+        for team, draft in team_drafts.items():
+            stats = await self.query.get_players(player_keys=draft["player_key"])
+            ranked_drafts_list.append(
+                {
+                    "rank": 0,
+                    "image_url": self.query.teams[next((i for i, t in enumerate(self.query.teams) if t["name"] == team), None)]["team_logos"]["team_logo"]["url"],
+                    "main_text": team,
+                    "sub_text": "",
+                    "stat": 0
+                }
+            )
+            i+=1
+            for j in range(len(draft)):
+                ranked_drafts_list[len(ranked_drafts_list)-1]["stat"] += round(float(stats[j]["player_points"][0]["total"]), 1)
+        ranked_drafts_list = sorted(ranked_drafts_list, key=lambda item: list(item.items())[4][1], reverse=True)
+        rank=1
+        for draft in ranked_drafts_list:
+            draft["rank"] = rank
+            draft["stat"] = round(draft["stat"], 1)
+            rank+=1
+        
+        return {"id": "best_worst_drafts",
+                "data": ranked_drafts_list}
