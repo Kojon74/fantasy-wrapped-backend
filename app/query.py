@@ -293,10 +293,6 @@ class Query:
         return response['league']['scoreboard']['matchups']
     
     async def get_matchup_data(self):
-        # url = f"/league/{self.league_key}"
-        # start_week = self.league_start_week
-        # end_week = self.league_end_week
-        # weeks = list(range(start_week, end_week+1))
         weekly_matchup_data = self.scoreboard
         completed_matchups_data = []
         winning_team = 0
@@ -343,6 +339,7 @@ class Query:
             metrics.get_most_dropped_players(),
             metrics.get_best_worst_drafts(),
             metrics.get_closest_matchups(),
+            metrics.get_biggest_blowout_matchups(),
         ]
         metrics_meta = {
             "official_standings": {
@@ -397,7 +394,12 @@ class Query:
             },
             "closest_matchups": {
                 "title": "A Win is a Win",
-                "description": "There were some real barburner matchups this year! Here is a look at this year's closest weekly matchups.",
+                "description": "There were some real barn burner matchups this year! Here is a look at this year's closest weekly matchups.",
+                "type": "list",
+            },
+            "biggest_blowouts": {
+                "title": "Biggest Blowouts",
+                "description": "Now looking at the opposite of barn burners, let's take a look at who got boat raced this year.",
                 "type": "list",
             },
         }

@@ -583,3 +583,18 @@ class Metrics:
                 } for i in range(top_x)
             ]
         return {"id": "closest_matchups", "data": closest_matchups_list}
+    
+    async def get_biggest_blowout_matchups(self):
+        completed_matchups_data = await self.query.get_matchup_data()
+        top_x = 10
+        matchups_data_by_point_diff_descen = sorted(completed_matchups_data, key=lambda x: abs(x['point_diff']), reverse=True)
+        biggest_blowouts_list = [
+                {
+                "rank": i+1,
+                "image_url": matchups_data_by_point_diff_descen[i]['team1_url'],
+                "main_text": f"{self.query.get_team_name_from_key(matchups_data_by_point_diff_descen[i]['team1_key'])} def. {self.query.get_team_name_from_key(matchups_data_by_point_diff_descen[i]['team2_key'])}",
+                "sub_text": "playoffs" if matchups_data_by_point_diff_descen[i]['is_playoffs'] else "",
+                "stat": matchups_data_by_point_diff_descen[i]['point_diff']
+                } for i in range(top_x)
+            ]
+        return {"id": "biggest_blowouts", "data": biggest_blowouts_list}
