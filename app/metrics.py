@@ -565,5 +565,21 @@ class Metrics:
             draft["stat"] = round(draft["stat"], 1)
             rank+=1
         
-        return {"id": "best_worst_drafts",
-                "data": ranked_drafts_list}
+        return {"id": "best_worst_drafts", "data": ranked_drafts_list}
+    
+    async def get_closest_matchups(self):
+        completed_matchups_data = await self.query.get_matchup_data()
+        top_x = 10
+        matchups_data_by_point_diff_ascen = sorted(completed_matchups_data, key=lambda x: abs(x['point_diff']))
+        closest_matchups_list = [
+                {
+                "rank": i+1,
+                "image_url": matchups_data_by_point_diff_ascen[i]['team1_url'],
+                "main_text": f"{self.query.get_team_name_from_key(matchups_data_by_point_diff_ascen[i]['team1_key'])} def. {self.query.get_team_name_from_key(matchups_data_by_point_diff_ascen[i]['team2_key'])}"
+                    if not matchups_data_by_point_diff_ascen[i]['is_tied'] else 
+                    f"{self.query.get_team_name_from_key(matchups_data_by_point_diff_ascen[i]['team1_key'])} and {self.query.get_team_name_from_key(matchups_data_by_point_diff_ascen[i]['team2_key'])} tied",
+                "sub_text": "playoffs" if matchups_data_by_point_diff_ascen[i]['is_playoffs'] else "",
+                "stat": matchups_data_by_point_diff_ascen[i]['point_diff']
+                } for i in range(top_x)
+            ]
+        return {"id": "closest_matchups", "data": closest_matchups_list}

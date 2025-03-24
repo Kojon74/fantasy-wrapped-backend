@@ -72,6 +72,11 @@ class Query:
         ]
         self.league_season = int(league["season"])
         self.teams = league["standings"]["teams"]
+        
+        weeks = ','.join(str(week) for week in range(self.league_start_week, self.league_end_week+1))
+        url = f"/league/{self.league_key}/scoreboard;week={weeks}"
+        response = await self.get_response(url)
+        self.scoreboard = response['league']['scoreboard']['matchups']
 
     async def get_game_weeks(self):
         url = f"/game/{self.game_id}/game_weeks"
@@ -281,6 +286,48 @@ class Query:
                 )
         return points_by_player
 
+    async def get_league_matchup_results_by_week(self, weeks: list[int]):
+        weeks = ','.join(str(week) for week in weeks)
+        url = f"/league/{self.league_key}/scoreboard;week={weeks}"
+        response = await self.get_response(url)
+        return response['league']['scoreboard']['matchups']
+    
+    async def get_matchup_data(self):
+        # url = f"/league/{self.league_key}"
+        # start_week = self.league_start_week
+        # end_week = self.league_end_week
+        # weeks = list(range(start_week, end_week+1))
+        weekly_matchup_data = self.scoreboard
+        completed_matchups_data = []
+        winning_team = 0
+        losing_team = 1
+        for matchup_num in range(len(weekly_matchup_data)):
+            point_diff = round(float(weekly_matchup_data[matchup_num]['teams'][0]['team_points']['total']) - float(weekly_matchup_data[matchup_num]['teams'][1]['team_points']['total']), 2)
+            if point_diff < 0:
+                winning_team = 1
+                losing_team = 0
+            else:
+                winning_team = 0
+                losing_team = 1
+            completed_matchups_data.append(
+                {
+                    'team1_key' : weekly_matchup_data[matchup_num]['teams'][winning_team]['team_key'],
+                    'team1_name' : weekly_matchup_data[matchup_num]['teams'][winning_team]['name'],
+                    'team1_points' : float(weekly_matchup_data[matchup_num]['teams'][winning_team]['team_points']['total']),
+                    'team1_url' : weekly_matchup_data[matchup_num]['teams'][winning_team]['team_logos']['team_logo']['url'],
+                    'team2_key' : weekly_matchup_data[matchup_num]['teams'][losing_team]['team_key'],
+                    'team2_name' : weekly_matchup_data[matchup_num]['teams'][losing_team]['name'],
+                    'team2_points' : float(weekly_matchup_data[matchup_num]['teams'][losing_team]['team_points']['total']),
+                    'team2_url' : weekly_matchup_data[matchup_num]['teams'][losing_team]['team_logos']['team_logo']['url'],
+                    'point_diff' : abs(point_diff),
+                    'is_tied' : int(weekly_matchup_data[matchup_num]['is_tied']),
+                    'week' : int(weekly_matchup_data[matchup_num]['week']),
+                    'is_playoffs' : int(weekly_matchup_data[matchup_num]['is_playoffs']),
+                    'is_consolation' : int(weekly_matchup_data[matchup_num]['is_consolation'])
+                }
+            )
+        return completed_matchups_data
+    
     async def cleanup(self):
         await self.session.close()
 
@@ -295,6 +342,7 @@ class Query:
             metrics.get_worst_drops(),
             metrics.get_most_dropped_players(),
             metrics.get_best_worst_drafts(),
+            metrics.get_closest_matchups(),
         ]
         metrics_meta = {
             "official_standings": {
@@ -345,6 +393,11 @@ class Query:
             "best_worst_drafts": {
                 "title": "Draft Guru",
                 "description": "Some managers are elite scouts and have a keen eye for talent! Let's take a look at who had the best drafts in your league (let's just hope they didn't drop their drafted players)",
+                "type": "list",
+            },
+            "closest_matchups": {
+                "title": "A Win is a Win",
+                "description": "There were some real barburner matchups this year! Here is a look at this year's closest weekly matchups.",
                 "type": "list",
             },
         }
