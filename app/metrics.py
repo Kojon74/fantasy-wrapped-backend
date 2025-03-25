@@ -575,9 +575,9 @@ class Metrics:
                 {
                 "rank": i+1,
                 "image_url": matchups_data_by_point_diff_ascen[i]['team1_url'],
-                "main_text": f"{self.query.get_team_name_from_key(matchups_data_by_point_diff_ascen[i]['team1_key'])} def. {self.query.get_team_name_from_key(matchups_data_by_point_diff_ascen[i]['team2_key'])}"
+                "main_text": f"{matchups_data_by_point_diff_ascen[i]['team1_name']} ({matchups_data_by_point_diff_ascen[i]['team1_points']}) def. {matchups_data_by_point_diff_ascen[i]['team2_name']} ({matchups_data_by_point_diff_ascen[i]['team2_points']})"
                     if not matchups_data_by_point_diff_ascen[i]['is_tied'] else 
-                    f"{self.query.get_team_name_from_key(matchups_data_by_point_diff_ascen[i]['team1_key'])} and {self.query.get_team_name_from_key(matchups_data_by_point_diff_ascen[i]['team2_key'])} tied",
+                    f"{matchups_data_by_point_diff_ascen[i]['team1_name']} and {matchups_data_by_point_diff_ascen[i]['team2_name']} tied",
                 "sub_text": "playoffs" if matchups_data_by_point_diff_ascen[i]['is_playoffs'] else "",
                 "stat": matchups_data_by_point_diff_ascen[i]['point_diff']
                 } for i in range(top_x)
@@ -592,7 +592,7 @@ class Metrics:
                 {
                 "rank": i+1,
                 "image_url": matchups_data_by_point_diff_descen[i]['team1_url'],
-                "main_text": f"{self.query.get_team_name_from_key(matchups_data_by_point_diff_descen[i]['team1_key'])} def. {self.query.get_team_name_from_key(matchups_data_by_point_diff_descen[i]['team2_key'])}",
+                "main_text": f"{matchups_data_by_point_diff_descen[i]['team1_name']} ({matchups_data_by_point_diff_descen[i]['team1_points']}) def. {matchups_data_by_point_diff_descen[i]['team2_name']} ({matchups_data_by_point_diff_descen[i]['team2_points']})",
                 "sub_text": "playoffs" if matchups_data_by_point_diff_descen[i]['is_playoffs'] else "",
                 "stat": matchups_data_by_point_diff_descen[i]['point_diff']
                 } for i in range(top_x)
@@ -664,7 +664,7 @@ class Metrics:
                 {
                 "rank": i+1,
                 "image_url": season_matchup_stats_descen[i][1]['team1_url'],
-                "main_text": f"{season_matchup_stats_descen[i][1]['team1_name']} def. {season_matchup_stats_descen[i][1]['team2_name']}",
+                "main_text": f"{season_matchup_stats_descen[i][1]['team1_name']} ({season_matchup_stats_descen[i][1]['team1_total_points']}) def. {season_matchup_stats_descen[i][1]['team2_name']} ({season_matchup_stats_descen[i][1]['team2_total_points']})",
                 "sub_text": "playoffs" if season_matchup_stats_descen[i][1]['incl_playoffs'] else "",
                 "stat": season_matchup_stats_descen[i][1]['total_point_diff']
                 } for i in range(top_x)
