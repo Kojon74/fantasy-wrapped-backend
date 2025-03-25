@@ -340,6 +340,7 @@ class Query:
             metrics.get_best_worst_drafts(),
             metrics.get_closest_matchups(),
             metrics.get_biggest_blowout_matchups(),
+            metrics.get_rivalry_dominance(),
         ]
         metrics_meta = {
             "official_standings": {
@@ -400,6 +401,11 @@ class Query:
             "biggest_blowouts": {
                 "title": "Biggest Blowouts",
                 "description": "Now looking at the opposite of barn burners, let's take a look at who got boat raced this year.",
+                "type": "list",
+            },
+            "rivalry_dominance": {
+                "title": "Pure Dominance",
+                "description": "Think Canada Hockey vs USA Hockey, Pakcers vs Bears, or Globetrotters vs Generals. Some teams never stood a chance against their rival. Take a look at these matchups with one team completely dominating the other (don't forget to give your friend a hard time for this one).",
                 "type": "list",
             },
         }

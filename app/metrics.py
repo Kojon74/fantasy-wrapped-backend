@@ -598,3 +598,76 @@ class Metrics:
                 } for i in range(top_x)
             ]
         return {"id": "biggest_blowouts", "data": biggest_blowouts_list}
+    
+    async def get_rivalry_dominance(self):
+        completed_matchups_data = await self.query.get_matchup_data()
+        matchup_dict = defaultdict(list)
+        for matchup in completed_matchups_data:
+            key = frozenset([matchup['team1_key'], matchup['team2_key']])
+            matchup_dict[key].append(matchup)
+        matchup_dict = dict(matchup_dict)
+        season_matchup_stats = {}
+        for matchup_combination in matchup_dict.keys():
+            team1_total_points = 0
+            team2_total_points = 0
+            for matchup in matchup_dict[matchup_combination]:
+                if matchup_combination in season_matchup_stats.keys() and matchup['team1_key'] == season_matchup_stats[matchup_combination]['team2_key']:
+                    team1_total_points += matchup['team2_points']
+                    team2_total_points += matchup['team1_points']
+                    season_matchup_stats[matchup_combination]['team1_total_points'] = round(team1_total_points, 2)
+                    season_matchup_stats[matchup_combination]['team2_total_points'] = round(team2_total_points, 2)
+                    season_matchup_stats[matchup_combination] = {
+                        'team1_key' : matchup['team2_key'],
+                        'team1_name' : matchup['team2_name'],
+                        'team1_total_points' : round(team1_total_points, 2),
+                        'team1_url' : matchup['team2_url'],
+                        'team2_key' : matchup['team1_key'],
+                        'team2_name' : matchup['team1_name'],
+                        'team2_total_points' : round(team2_total_points, 2),
+                        'team2_url' : matchup['team1_url'],
+                        'incl_playoffs' : matchup['is_playoffs'],
+                        'incl_consolation' :matchup['is_consolation']
+                    }
+                else:
+                    team1_total_points += matchup['team1_points']
+                    team2_total_points += matchup['team2_points']
+                    season_matchup_stats[matchup_combination] = {
+                        'team1_key' : matchup['team1_key'],
+                        'team1_name' : matchup['team1_name'],
+                        'team1_total_points' : round(team1_total_points, 2),
+                        'team1_url' : matchup['team1_url'],
+                        'team2_key' : matchup['team2_key'],
+                        'team2_name' : matchup['team2_name'],
+                        'team2_total_points' : round(team2_total_points, 2),
+                        'team2_url' : matchup['team2_url'],
+                        'incl_playoffs' : matchup['is_playoffs'],
+                        'incl_consolation' :matchup['is_consolation']
+                    }
+                season_matchup_stats[matchup_combination]['total_point_diff'] = round(season_matchup_stats[matchup_combination]['team1_total_points'] - season_matchup_stats[matchup_combination]['team2_total_points'], 2)
+            if season_matchup_stats[matchup_combination]['total_point_diff'] < 0:
+                team1_key_temp = season_matchup_stats[matchup_combination]['team1_key']
+                team1_name_temp = season_matchup_stats[matchup_combination]['team1_name']
+                team1_total_points_temp = season_matchup_stats[matchup_combination]['team1_total_points']
+                team1_url_temp = season_matchup_stats[matchup_combination]['team1_url']
+                season_matchup_stats[matchup_combination]['team1_key'] = season_matchup_stats[matchup_combination]['team2_key']
+                season_matchup_stats[matchup_combination]['team1_name'] = season_matchup_stats[matchup_combination]['team2_name']
+                season_matchup_stats[matchup_combination]['team1_total_points'] = season_matchup_stats[matchup_combination]['team2_total_points']
+                season_matchup_stats[matchup_combination]['team1_url'] = season_matchup_stats[matchup_combination]['team2_url']
+                season_matchup_stats[matchup_combination]['team2_key'] = team1_key_temp
+                season_matchup_stats[matchup_combination]['team2_name'] = team1_name_temp
+                season_matchup_stats[matchup_combination]['team2_total_points'] = team1_total_points_temp
+                season_matchup_stats[matchup_combination]['team2_url'] = team1_url_temp
+                season_matchup_stats[matchup_combination]['total_point_diff'] = abs(season_matchup_stats[matchup_combination]['total_point_diff'])
+        season_matchup_stats_descen = sorted(season_matchup_stats.items(), key=lambda matchup: abs(matchup[1]['total_point_diff']), reverse=True)
+        top_x = 10
+        season_matchup_list = [
+                {
+                "rank": i+1,
+                "image_url": season_matchup_stats_descen[i][1]['team1_url'],
+                "main_text": f"{season_matchup_stats_descen[i][1]['team1_name']} def. {season_matchup_stats_descen[i][1]['team2_name']}",
+                "sub_text": "playoffs" if season_matchup_stats_descen[i][1]['incl_playoffs'] else "",
+                "stat": season_matchup_stats_descen[i][1]['total_point_diff']
+                } for i in range(top_x)
+            ]
+        return {"id": "rivalry_dominance", "data": season_matchup_list}
+
