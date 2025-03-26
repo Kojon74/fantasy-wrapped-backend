@@ -19,6 +19,7 @@ class Query:
         self.game_id, _, self.league_id = league_key.split(".")
         self.game_logs_cache = {}
         self.doc_ref = doc_ref
+        self.player_points_by_date = {}
 
         self.oauth = authenticate(token)
         self.oauth.refresh_access_token()  # Initialize self.token_time
@@ -66,10 +67,11 @@ class Query:
         self.playoff_start_week = int(
             league["settings"].get("playoff_start_week", None)
         )
-        self.league_roster_positions = [
-            {roster_position["position"]: roster_position["count"]}
+        self.league_roster_positions = {
+            roster_position["position"]: int(roster_position["count"])
             for roster_position in league["settings"]["roster_positions"]
-        ]
+        }
+
         self.league_season = int(league["season"])
         self.teams = league["standings"]["teams"]
 
