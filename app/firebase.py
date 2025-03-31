@@ -1,17 +1,21 @@
 import os
 import firebase_admin
 from firebase_admin import credentials, firestore
+from dotenv import load_dotenv
+import json
+
+load_dotenv()
+GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
 
 def initialize_firebase():
-    cur_dir = os.path.dirname(__file__)
-    parent_dir = os.path.abspath(os.path.join(cur_dir, os.pardir))
-    key_path = os.path.join(
-        parent_dir, "config", "fantasy-warped-firebase-adminsdk-fbsvc-1fd9535117.json"
-    )
-    cred = credentials.Certificate(key_path)
     # Initialize Firebase app (Only do this once)
     if not firebase_admin._apps:
+        google_application_credentials_json = json.loads(GOOGLE_APPLICATION_CREDENTIALS)
+        google_application_credentials_json["private_key"] = (
+            google_application_credentials_json["private_key"].replace("\\n", "\n")
+        )
+        cred = credentials.Certificate(google_application_credentials_json)
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
