@@ -370,7 +370,7 @@ class Query:
             metrics.get_team_season_data(),
             metrics.get_biggest_comebacks(),
             metrics.get_worst_drops(),
-            metrics.get_most_dropped_players(),
+            # metrics.get_most_dropped_players(),
             # metrics.get_best_worst_drafts(),
             # metrics.get_closest_matchups(),
             # metrics.get_biggest_blowout_matchups(),

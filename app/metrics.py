@@ -437,6 +437,18 @@ class Metrics:
                     if transaction_date.strftime(
                         "%Y-%m-%d"
                     ) != last_transaction_date.strftime("%Y-%m-%d"):
+                        # If new date, calculate points accumulated by dropped players
+                        if (
+                            last_transaction_date > transaction_date
+                            and player["transaction_data"]["type"] == "drop"
+                        ):
+                            # Accounts for transactions before league start date
+                            drop_players_dict[player["player_key"]].add(
+                                player["transaction_data"]["source_team_key"]
+                            )
+                            continue
+                        elif last_transaction_date > transaction_date:
+                            continue
                         dates = get_dates(last_transaction_date, transaction_date)
                         await update_drop_players_points(drop_players_dict, dates)
                         if transaction_date > datetime.strptime(
