@@ -11,7 +11,6 @@ app = FastAPI()
 
 
 async def event_stream(resp):
-    yield "Test\n"
     await asyncio.sleep(1)
     for json_resp in resp:
         yield f"{json_resp}\n"  # StreamingResponse already prefixes data with "data: "
@@ -24,8 +23,6 @@ async def get_fantasy_wrapped(
     authorization: Annotated[str | None, Header()] = None,
     x_refresh_token: Annotated[str | None, Header()] = None,
 ):
-    if not authorization or not authorization.startswith("Bearer "):
-        return json.dumps({"error": "Missing or invalid access token"}), 401
     db = initialize_firebase()
     doc_ref = db.collection("wrapped").document(league_key)
     doc = doc_ref.get()
@@ -33,6 +30,8 @@ async def get_fantasy_wrapped(
         resp = doc.to_dict()["metrics"]
         return StreamingResponse(event_stream(resp), media_type="text/event-stream")
     print("Not in Firebase Firestore cache")
+    if not authorization or not authorization.startswith("Bearer "):
+        return json.dumps({"error": "Missing or invalid access token"}), 401
     access_token = authorization.split(" ")[1]
     token = {"access_token": access_token, "refresh_token": x_refresh_token}
 
