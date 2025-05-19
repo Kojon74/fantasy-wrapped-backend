@@ -551,35 +551,32 @@ class Metrics:
         url = f"/league/{self.query.league_key}/draftresults"
         response = await self.query.get_response(url)
         full_draft = response["league"]["draft_results"]
-        full_draft = pd.DataFrame(
-            data=full_draft, columns=["pick", "round", "team_key", "player_key"]
-        )
         teams = self.query.get_teams()
         team_keys = tuple(teams.keys())
-        team_drafts = {
-            self.query.get_team_name_from_key(team_key): full_draft[
-                full_draft["team_key"] == team_key
-            ]
-            for team_key in team_keys
-        }
+        team_drafts = {team_key: [] for team_key in team_keys}
+        for i in range(len(full_draft)):
+            team_drafts[full_draft[i]["team_key"]].append(full_draft[i])
         ranked_drafts_list = []
         i = 0
         for team, draft in team_drafts.items():
-            stats = await self.query.get_players(player_keys=draft["player_key"])
+            # print(team, draft)
+            player_keys = [pick['player_key'] for pick in draft]
+            stats = await self.query.get_players(player_keys=player_keys)
+            # pprint(query.teams)
             ranked_drafts_list.append(
                 {
                     "rank": 0,
                     "image_url": self.query.teams[
                         next(
-                            (
-                                i
-                                for i, t in enumerate(self.query.teams)
-                                if t["name"] == team
-                            ),
-                            None,
-                        )
-                    ]["team_logos"]["team_logo"]["url"],
-                    "main_text": team,
+                                (
+                                    i
+                                    for i, t in enumerate(self.query.teams)
+                                    if t["team_key"] == team
+                                ),
+                                None,
+                            )
+                        ]["team_logos"]["team_logo"]["url"],
+                    "main_text": self.query.get_team_name_from_key(team),
                     "sub_text": "",
                     "stat": 0,
                 }
@@ -597,7 +594,6 @@ class Metrics:
             draft["rank"] = rank
             draft["stat"] = round(draft["stat"], 1)
             rank += 1
-
         return {"id": "best_worst_drafts", "data": ranked_drafts_list}
 
     async def get_closest_matchups(self):
