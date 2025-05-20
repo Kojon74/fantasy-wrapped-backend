@@ -587,14 +587,30 @@ class Metrics:
                     float(stats[j]["player_points"][0]["total"]), 1
                 )
         ranked_drafts_list = sorted(
-            ranked_drafts_list, key=lambda item: list(item.items())[4][1], reverse=True
+            ranked_drafts_list, key=lambda item: list(item.items())[4][1], reverse=False
         )
         rank = 1
+        total_drafts = len(ranked_drafts_list)
+        best_drafts = []
+        worst_drafts = []
         for draft in ranked_drafts_list:
-            draft["rank"] = rank
-            draft["stat"] = round(draft["stat"], 1)
-            rank += 1
-        return {"id": "best_worst_drafts", "data": ranked_drafts_list}
+            if rank <= total_drafts/2 and best_drafts == []:
+                draft["rank"] = rank
+                draft["stat"] = round(draft["stat"], 1)
+                worst_drafts.append(draft)
+                rank += 1
+            else:
+                if total_drafts%2 != 0 and best_drafts == []:
+                     rank += 1
+                rank -= 1
+                draft["rank"] = rank
+                draft["stat"] = round(draft["stat"], 1)
+                best_drafts.append(draft)
+        best_drafts.reverse()
+        return [
+             {"id": "best_drafts", "data": best_drafts},
+             {"id": "worst_drafts", "data": worst_drafts}
+        ]
 
     async def get_closest_matchups(self):
         completed_matchups_data = await self.query.get_matchup_data()

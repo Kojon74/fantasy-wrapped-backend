@@ -422,11 +422,16 @@ class Query:
                 "description": "These players just couldn’t find a permanent home! This metric highlights the most frequently added and dropped players of the season, showing which names cycled through the league the most.",
                 "type": "list",
             },
-            # "best_worst_drafts": {
-            #     "title": "Draft Guru",
-            #     "description": "Some managers are elite scouts and have a keen eye for talent! Let's take a look at who had the best drafts in your league (let's just hope they didn't drop their drafted players)",
-            #     "type": "list",
-            # },
+            "best_drafts": {
+                "title": "Draft Guru",
+                "description": "Some managers are elite scouts and have a keen eye for talent! Let's take a look at who had the best drafts in your league (let's just hope they didn't drop their drafted players)",
+                "type": "list",
+            },
+            "worst_drafts": {
+                "title": "Bench Builder",
+                "description": "Now lets take a look at the managers who really laid an egg on draft day (maybe do some research next time)",
+                "type": "list",
+            }, 
             "closest_matchups": {
                 "title": "A Win is a Win",
                 "description": "There were some real barn burner matchups this year! Here is a look at this year's closest weekly matchups.",
